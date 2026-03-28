@@ -11,12 +11,12 @@ from email.message import EmailMessage
 
 from jmd import jmd_mode, jmd_to_dict, serialize
 
-from .config import SMTPConfig
+from .config import MailConfig
 
 _LABEL = "Message"
 
 
-def send(document: str, cfg: SMTPConfig) -> str:
+def send(document: str, cfg: MailConfig) -> str:
     """Send an email described by a JMD Message document.
 
     Args:
@@ -60,7 +60,7 @@ def send(document: str, cfg: SMTPConfig) -> str:
     all_recipients = to_addrs + cc_addrs + bcc_addrs
 
     try:
-        with smtplib.SMTP(cfg.host, cfg.port, timeout=30) as conn:
+        with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=30) as conn:
             conn.ehlo()
             conn.starttls()
             conn.ehlo()

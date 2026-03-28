@@ -1,7 +1,7 @@
-"""JMD MCP server for email — SMTP sender (Phase 1).
+"""JMD MCP server for email — SMTP + IMAP.
 
-Exposes a single write tool for sending emails via SMTP.
-IMAP read/delete support will follow in a later phase.
+Exposes three tools — read, write, delete — using JMD as the message
+format.  SMTP handles outgoing mail; IMAP handles reading and deletion.
 
 Configuration is read from ~/.config/jmd/mail.jmd.
 The account password must be stored in the OS keyring under
@@ -15,61 +15,111 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from . import config, smtp
+from . import config, imap, smtp
 
 _INSTRUCTIONS = """
-This server sends email via SMTP using JMD as the message format.
+This server provides email access via SMTP (send) and IMAP (read/delete)
+using JMD as the message format.
 
 ## Configuration
 
 Create ~/.config/jmd/mail.jmd:
 
-  # SMTPConfig
-  host: smtp.gmail.com
-  port: 587
+  # MailConfig
+  smtp_host: smtp.example.com
+  smtp_port: 587
+  imap_host: imap.example.com
+  imap_port: 993
   username: you@example.com
 
 Store your password in the keyring (via jmd-mcp-keyring):
 
-  write("# Credentials\\nservice: jmd-mcp-mail\\nusername: you@example.com\\npassword: your-app-password")
+  write("# Credentials\\nservice: jmd-mcp-mail\\nusername: you@example.com\\npassword: your-password")
 
 ## Sending a message
 
   write("# Message\\nto: recipient@example.com\\nsubject: Hello\\nbody: Message text")
 
-Multiple recipients (comma-separated):
+Optional fields: cc, bcc (comma-separated addresses).
 
-  write("# Message\\nto: alice@example.com, bob@example.com\\ncc: charlie@example.com\\nsubject: Meeting\\nbody: See you there.")
+## Reading messages
 
-## Fields
+List recent messages from INBOX (headers only):
 
-  to:      required — one or more recipient addresses (comma-separated)
-  subject: required — message subject
-  body:    required — plain text body
-  cc:      optional — carbon copy addresses (comma-separated)
-  bcc:     optional — blind carbon copy addresses (comma-separated)
+  read("#? Message")
+
+Filter by folder:
+
+  read("#? Message\\nfolder: Sent")
+
+Filter by sender (substring):
+
+  read("#? Message\\nfrom: ~gmail")
+
+Filter by subject:
+
+  read("#? Message\\nsubject: ~invoice")
+
+Fetch one message with full body:
+
+  read("# Message\\nid: 12345\\nfolder: INBOX")
+
+Describe schema:
+
+  read("#! Message")
+
+## Deleting a message
+
+  delete("#- Message\\nid: 12345\\nfolder: INBOX")
 
 ## Error handling
 
 All errors return a # Error document:
 
   # Error
-  status: 401
-  code: auth_failed
-  message: SMTP authentication failed
+  status: 404
+  code: not_found
+  message: Message 12345 not found in INBOX
 """
 
 mcp = FastMCP("jmd-mcp-mail", instructions=_INSTRUCTIONS)
 
-_cfg: config.SMTPConfig | None = None
+_cfg: config.MailConfig | None = None
 
 
-def _get_cfg() -> config.SMTPConfig:
-    """Return cached SMTP config, loading on first call."""
+def _get_cfg() -> config.MailConfig:
+    """Return cached mail config, loading on first call."""
     global _cfg
     if _cfg is None:
         _cfg = config.load()
     return _cfg
+
+
+@mcp.tool()
+def read(document: str) -> str:
+    """Read email messages using a JMD document.
+
+    Schema document (#! Message): describe the message structure.
+
+    Data document (# Message): fetch one message by id.
+    Requires id field; folder defaults to INBOX.
+
+        # Message
+        id: 12345
+        folder: INBOX
+
+    Query document (#? Message): list and filter messages.
+    Returns headers only (no body). Folder defaults to INBOX.
+
+        #? Message
+        folder: INBOX
+        from: ~example.com
+        subject: ~invoice
+    """
+    try:
+        return imap.read(document, _get_cfg())
+    except (FileNotFoundError, ValueError) as e:
+        return imap._error(500, "config_error", str(e))
 
 
 @mcp.tool()
@@ -87,10 +137,27 @@ def write(document: str) -> str:
     Returns a confirmation document on success.
     """
     try:
-        cfg = _get_cfg()
+        return smtp.send(document, _get_cfg())
     except (FileNotFoundError, ValueError) as e:
         return smtp._error(500, "config_error", str(e))
-    return smtp.send(document, cfg)
+
+
+@mcp.tool()
+def delete(document: str) -> str:
+    """Delete an email using a JMD delete document.
+
+    Requires id and folder fields.
+
+        #- Message
+        id: 12345
+        folder: INBOX
+
+    The message is permanently deleted (flagged \\Deleted + EXPUNGE).
+    """
+    try:
+        return imap.delete(document, _get_cfg())
+    except (FileNotFoundError, ValueError) as e:
+        return imap._error(500, "config_error", str(e))
 
 
 def main() -> None:

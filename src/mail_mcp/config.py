@@ -1,6 +1,6 @@
 """Configuration for jmd-mcp-mail.
 
-Reads SMTP settings from ~/.config/jmd/mail.jmd.
+Reads mail settings from ~/.config/jmd/mail.jmd.
 The account password is retrieved from the OS keyring
 (service: jmd-mcp-mail, username: <configured username>).
 """
@@ -13,25 +13,26 @@ import keyring
 from jmd import jmd_to_dict
 
 _CONFIG_PATH = Path.home() / ".config" / "jmd" / "mail.jmd"
-
 _KEYRING_SERVICE = "jmd-mcp-mail"
 
 
 @dataclass
-class SMTPConfig:
-    """SMTP connection parameters."""
+class MailConfig:
+    """Mail connection parameters for SMTP and IMAP."""
 
-    host: str
-    port: int
+    smtp_host: str
+    smtp_port: int
+    imap_host: str
+    imap_port: int
     username: str
     password: str
 
 
-def load() -> SMTPConfig:
-    """Load SMTP configuration from ~/.config/jmd/mail.jmd.
+def load() -> MailConfig:
+    """Load mail configuration from ~/.config/jmd/mail.jmd.
 
     Returns:
-        SMTPConfig with host, port, username, and password.
+        MailConfig with SMTP/IMAP parameters and password from keyring.
 
     Raises:
         FileNotFoundError: If the config file does not exist.
@@ -41,38 +42,58 @@ def load() -> SMTPConfig:
         raise FileNotFoundError(
             f"Mail config not found: {_CONFIG_PATH}\n"
             "Create ~/.config/jmd/mail.jmd with:\n"
-            "  # SMTPConfig\n"
-            "  host: smtp.example.com\n"
-            "  port: 587\n"
+            "  # MailConfig\n"
+            "  smtp_host: smtp.example.com\n"
+            "  smtp_port: 587\n"
+            "  imap_host: imap.example.com\n"
+            "  imap_port: 993\n"
             "  username: you@example.com"
         )
 
     fields = jmd_to_dict(_CONFIG_PATH.read_text(encoding="utf-8"))
 
-    host = str(fields.get("host", "")).strip()
-    port_raw = fields.get("port", 587)
+    smtp_host = str(fields.get("smtp_host", "")).strip()
+    imap_host = str(fields.get("imap_host", "")).strip()
     username = str(fields.get("username", "")).strip()
 
-    if not host:
-        raise ValueError("mail.jmd: 'host' is required")
+    if not smtp_host:
+        raise ValueError("mail.jmd: 'smtp_host' is required")
+    if not imap_host:
+        raise ValueError("mail.jmd: 'imap_host' is required")
     if not username:
         raise ValueError("mail.jmd: 'username' is required")
 
-    try:
-        port = int(port_raw)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"mail.jmd: 'port' must be an integer, got {port_raw!r}") from exc
+    smtp_port = _int_field(fields, "smtp_port", default=587)
+    imap_port = _int_field(fields, "imap_port", default=993)
 
     password = keyring.get_password(_KEYRING_SERVICE, username)
     if password is None:
         raise ValueError(
             f"No password in keyring for {_KEYRING_SERVICE}/{username}.\n"
-            "Store it first:\n"
+            "Store it first via jmd-mcp-keyring:\n"
             f"  write('# Credentials\\nservice: {_KEYRING_SERVICE}"
             f"\\nusername: {username}\\npassword: <your-password>')"
         )
 
-    return SMTPConfig(host=host, port=port, username=username, password=password)
+    return MailConfig(
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        imap_host=imap_host,
+        imap_port=imap_port,
+        username=username,
+        password=password,
+    )
+
+
+def _int_field(fields: dict, key: str, default: int) -> int:
+    """Parse an integer field from config, falling back to default."""
+    raw = fields.get(key, default)
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"mail.jmd: '{key}' must be an integer, got {raw!r}"
+        ) from exc
 
 
 def config_path() -> Path:
