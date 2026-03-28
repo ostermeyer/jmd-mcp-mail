@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jmd-mcp-mail"
+version = "0.1"
+description = "JMD-native MCP server for email — IMAP/SMTP access for LLM agents"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Andreas Ostermeyer", email = "andreas@ostermeyer.de" }]
+requires-python = ">=3.10"
+keywords = ["jmd", "mcp", "imap", "smtp", "email", "llm"]
+dependencies = [
+    "mcp[cli]>=1.0",
+    "jmd-format @ git+https://github.com/ostermeyer/jmd-impl.git",
+    "pydantic-settings>=2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ostermeyer/jmd-mcp-mail"
+Repository = "https://github.com/ostermeyer/jmd-mcp-mail"
+
+[project.scripts]
+jmd-mcp-mail = "mail_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["mail_mcp*"]
+
+[tool.uv.sources]
+jmd-format = { path = "../jmd-impl", editable = true }
+
+[tool.ruff]
+line-length = 80
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "D",   # pydocstyle (Google convention)
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+mypy_path = "../jmd-impl"
