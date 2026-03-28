@@ -14,7 +14,7 @@ keywords = ["jmd", "mcp", "imap", "smtp", "email", "llm"]
 dependencies = [
     "mcp[cli]>=1.0",
     "jmd-format @ git+https://github.com/ostermeyer/jmd-impl.git",
-    "pydantic-settings>=2.0",
+    "keyring>=25.0",
 ]
 
 [project.urls]
