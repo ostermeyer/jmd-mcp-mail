@@ -34,11 +34,13 @@ Create ~/.config/jmd/mail.jmd:
 
 Store your password in the keyring (via jmd-mcp-keyring):
 
-  write("# Credentials\\nservice: jmd-mcp-mail\\nusername: you@example.com\\npassword: your-password")
+  write("# Credentials\\nservice: jmd-mcp-mail\\n"
+        "username: you@example.com\\npassword: your-password")
 
 ## Sending a message
 
-  write("# Message\\nto: recipient@example.com\\nsubject: Hello\\nbody: Message text")
+  write("# Message\\nto: recipient@example.com\\n"
+        "subject: Hello\\nbody: Message text")
 
 Optional fields: cc, bcc (comma-separated addresses).
 
@@ -144,7 +146,7 @@ def write(document: str) -> str:
 
 @mcp.tool()
 def delete(document: str) -> str:
-    """Delete an email using a JMD delete document.
+    r"""Delete an email using a JMD delete document.
 
     Requires id and folder fields.
 

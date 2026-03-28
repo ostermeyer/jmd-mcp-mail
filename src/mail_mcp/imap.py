@@ -2,18 +2,29 @@
 
 Reads, searches, and deletes email messages via IMAP4_SSL (stdlib).
 Supports JMD data, query, schema, and delete document modes.
+HTML bodies are converted to Markdown via markdownify.
+Attachments can be downloaded to a user-specified path.
 """
 from __future__ import annotations
 
 import email
-import html.parser
 import imaplib
 import re
+import subprocess
+from collections.abc import Generator
 from contextlib import contextmanager
 from email.header import decode_header
-from typing import Generator
+from pathlib import Path
 
-from jmd import JMDDeleteParser, JMDQueryParser, jmd_mode, jmd_to_dict, serialize
+import markdownify
+from jmd import (
+    JMDDeleteParser,
+    JMDQueryParser,
+    QueryField,
+    jmd_mode,
+    jmd_to_dict,
+    serialize,
+)
 
 from .config import MailConfig
 
@@ -21,6 +32,26 @@ _LABEL = "Message"
 
 # Maximum messages returned per query (guards against huge inboxes).
 _DEFAULT_PAGE_SIZE = 25
+
+
+# ---------------------------------------------------------------------------
+# XDG download directory
+# ---------------------------------------------------------------------------
+
+def _xdg_download_dir() -> Path:
+    """Return the XDG user download directory, falling back to ~/Downloads."""
+    try:
+        result = subprocess.run(
+            ["xdg-user-dir", "DOWNLOAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return Path(result.stdout.strip())
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return Path.home() / "Downloads"
 
 
 # ---------------------------------------------------------------------------
@@ -42,47 +73,8 @@ def _connect(cfg: MailConfig) -> Generator[imaplib.IMAP4_SSL, None, None]:
 
 
 # ---------------------------------------------------------------------------
-# Header decoding helpers
+# Header decoding
 # ---------------------------------------------------------------------------
-
-class _HTMLTextExtractor(html.parser.HTMLParser):
-    """Minimal HTML-to-text extractor using only stdlib."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._parts: list[str] = []
-        self._skip = False
-
-    def handle_starttag(self, tag: str, attrs: list) -> None:
-        if tag in ("script", "style"):
-            self._skip = True
-        if tag == "br":
-            self._parts.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("script", "style"):
-            self._skip = False
-        if tag in ("p", "div", "tr", "li"):
-            self._parts.append("\n")
-
-    def handle_data(self, data: str) -> None:
-        if not self._skip:
-            self._parts.append(data)
-
-    def text(self) -> str:
-        """Return extracted plain text, collapsing whitespace."""
-        raw = "".join(self._parts)
-        # Collapse multiple blank lines
-        return re.sub(r"\n{3,}", "\n\n", raw).strip()
-
-
-def _html_to_text(html_bytes: bytes, charset: str | None) -> str:
-    """Convert HTML bytes to plain text."""
-    html_str = html_bytes.decode(charset or "utf-8", errors="replace")
-    extractor = _HTMLTextExtractor()
-    extractor.feed(html_str)
-    return extractor.text()
-
 
 def _decode_header(raw: str | None) -> str:
     """Decode an RFC 2047-encoded mail header to a plain string."""
@@ -97,11 +89,14 @@ def _decode_header(raw: str | None) -> str:
     return " ".join(parts).replace("\n", " ").replace("\r", "").strip()
 
 
-def _parse_message(uid: str, raw_bytes: bytes) -> dict:
-    """Parse a raw RFC 2822 message into a JMD-friendly dict."""
-    msg = email.message_from_bytes(raw_bytes)
-    body = ""
-    html_fallback: bytes | None = None
+# ---------------------------------------------------------------------------
+# Body extraction
+# ---------------------------------------------------------------------------
+
+def _extract_body(msg: email.message.Message) -> str:
+    """Extract body from a message, converting HTML to Markdown."""
+    plain: str = ""
+    html_raw: bytes | None = None
     html_charset: str | None = None
 
     if msg.is_multipart():
@@ -110,39 +105,132 @@ def _parse_message(uid: str, raw_bytes: bytes) -> dict:
             payload = part.get_payload(decode=True)
             if not isinstance(payload, bytes):
                 continue
-            if ct == "text/plain":
-                body = payload.decode(
-                    part.get_content_charset() or "utf-8", errors="replace"
+            if ct == "text/plain" and not plain:
+                plain = payload.decode(
+                    part.get_content_charset() or "utf-8",
+                    errors="replace",
                 )
-                break
-            if ct == "text/html" and html_fallback is None:
-                html_fallback = payload
+            elif ct == "text/html" and html_raw is None:
+                html_raw = payload
                 html_charset = part.get_content_charset()
     else:
         payload = msg.get_payload(decode=True)
         if isinstance(payload, bytes):
             if msg.get_content_type() == "text/html":
-                html_fallback = payload
+                html_raw = payload
                 html_charset = msg.get_content_charset()
             else:
-                body = payload.decode(
-                    msg.get_content_charset() or "utf-8", errors="replace"
+                plain = payload.decode(
+                    msg.get_content_charset() or "utf-8",
+                    errors="replace",
                 )
 
-    if not body and html_fallback is not None:
-        body = _html_to_text(html_fallback, html_charset)
+    if plain:
+        return plain.strip()
+    if html_raw is not None:
+        html_str = html_raw.decode(html_charset or "utf-8", errors="replace")
+        return markdownify.markdownify(
+            html_str,
+            heading_style="ATX",
+            strip=["table", "thead", "tbody", "tr", "th", "td"],
+        ).strip()
+    return ""
 
-    return {
+
+# ---------------------------------------------------------------------------
+# Attachment handling
+# ---------------------------------------------------------------------------
+
+def _collect_attachments(
+    msg: email.message.Message,
+) -> list[dict[str, object]]:
+    """Collect attachment metadata from a message (no download)."""
+    attachments: list[dict[str, object]] = []
+    for part in msg.walk():
+        disposition = str(part.get("Content-Disposition") or "")
+        ct = part.get_content_type()
+        if "attachment" in disposition or (
+            ct not in ("text/plain", "text/html")
+            and part.get_filename()
+        ):
+            filename = _decode_header(part.get_filename()) or "attachment"
+            payload = part.get_payload(decode=True)
+            size = len(payload) if isinstance(payload, bytes) else 0
+            attachments.append({
+                "name": filename,
+                "content_type": ct,
+                "size": size,
+            })
+    return attachments
+
+
+def _download_attachments(
+    msg: email.message.Message,
+    dest: Path,
+) -> list[dict[str, object]]:
+    """Download attachments to dest directory, return metadata with paths."""
+    dest.mkdir(parents=True, exist_ok=True)
+    attachments: list[dict[str, object]] = []
+    for part in msg.walk():
+        disposition = str(part.get("Content-Disposition") or "")
+        ct = part.get_content_type()
+        if "attachment" in disposition or (
+            ct not in ("text/plain", "text/html")
+            and part.get_filename()
+        ):
+            filename = _decode_header(part.get_filename()) or "attachment"
+            payload = part.get_payload(decode=True)
+            if not isinstance(payload, bytes):
+                continue
+            out = dest / filename
+            out.write_bytes(payload)
+            attachments.append({
+                "name": filename,
+                "content_type": ct,
+                "size": len(payload),
+                "path": str(out),
+            })
+    return attachments
+
+
+# ---------------------------------------------------------------------------
+# Message parsing
+# ---------------------------------------------------------------------------
+
+def _parse_message(
+    uid: str,
+    raw_bytes: bytes,
+    folder: str,
+    download: bool = False,
+    download_path: Path | None = None,
+) -> dict[str, object]:
+    """Parse a raw RFC 2822 message into a JMD-friendly dict."""
+    msg = email.message_from_bytes(raw_bytes)
+    body = _extract_body(msg)[:4000]
+
+    if download:
+        dest = download_path or _xdg_download_dir()
+        attachments: list[dict[str, object]] = _download_attachments(msg, dest)
+    else:
+        attachments = _collect_attachments(msg)
+
+    record: dict[str, object] = {
         "id": uid,
         "from": _decode_header(msg.get("From")),
         "to": _decode_header(msg.get("To")),
         "subject": _decode_header(msg.get("Subject")),
         "date": _decode_header(msg.get("Date")),
-        "body": body.strip()[:4000],
+        "body": body,
+        "folder": folder,
     }
+    if attachments:
+        record["attachments"] = attachments
+    return record
 
 
-def _parse_envelope(uid: str, raw_bytes: bytes) -> dict:
+def _parse_envelope(
+    uid: str, raw_bytes: bytes, folder: str
+) -> dict[str, object]:
     """Parse only headers (fast, for listing)."""
     msg = email.message_from_bytes(raw_bytes)
     return {
@@ -151,6 +239,7 @@ def _parse_envelope(uid: str, raw_bytes: bytes) -> dict:
         "to": _decode_header(msg.get("To")),
         "subject": _decode_header(msg.get("Subject")),
         "date": _decode_header(msg.get("Date")),
+        "folder": folder,
     }
 
 
@@ -158,18 +247,14 @@ def _parse_envelope(uid: str, raw_bytes: bytes) -> dict:
 # IMAP SEARCH criteria builder
 # ---------------------------------------------------------------------------
 
-def _build_search_criteria(fields: list) -> str:
-    """Translate JMD QueryFields into an IMAP SEARCH string.
-
-    Supports: from, to, subject (substring via ~), folder is handled
-    separately. Unknown fields are ignored.
-    """
+def _build_search_criteria(fields: list[QueryField]) -> str:
+    """Translate JMD QueryFields into an IMAP SEARCH string."""
     criteria: list[str] = ["ALL"]
     imap_keys = {"from": "FROM", "to": "TO", "subject": "SUBJECT"}
 
     for f in fields:
         if f.key == "folder":
-            continue  # handled at SELECT level
+            continue
         imap_key = imap_keys.get(f.key)
         if not imap_key:
             continue
@@ -178,7 +263,6 @@ def _build_search_criteria(fields: list) -> str:
         if op in ("regex", "~"):
             criteria.append(f'{imap_key} "{vals[0]}"')
         elif op == "|":
-            # IMAP has no OR-list; use first value only
             criteria.append(f'{imap_key} "{vals[0]}"')
 
     return " ".join(criteria)
@@ -210,15 +294,20 @@ def read(document: str, cfg: MailConfig) -> str:
             "date: string readonly\n"
             "body: string optional\n"
             "folder: string optional\n"
+            "download: boolean optional\n"
+            "path: string optional\n"
         )
 
     if mode == "data":
         fields = jmd_to_dict(document)
         uid = str(fields.get("id", "")).strip()
         folder = str(fields.get("folder", "INBOX")).strip()
+        download = bool(fields.get("download", False))
+        path_raw = str(fields.get("path", "")).strip()
+        download_path = Path(path_raw) if path_raw else None
         if not uid:
             return _error(400, "missing_fields", "'id' is required")
-        return _fetch_one(cfg, folder, uid)
+        return _fetch_one(cfg, folder, uid, download, download_path)
 
     if mode == "query":
         query = JMDQueryParser().parse(document)
@@ -233,19 +322,32 @@ def read(document: str, cfg: MailConfig) -> str:
     return _error(400, "invalid_mode", f"Unsupported mode for read: {mode!r}")
 
 
-def _fetch_one(cfg: MailConfig, folder: str, uid: str) -> str:
+def _fetch_one(
+    cfg: MailConfig,
+    folder: str,
+    uid: str,
+    download: bool,
+    download_path: Path | None,
+) -> str:
     """Fetch a single message by UID."""
     try:
         with _connect(cfg) as conn:
             conn.select(f'"{folder}"', readonly=True)
             status, data = conn.uid("FETCH", uid, "(RFC822)")
             if status != "OK" or not data or data[0] is None:
-                return _error(404, "not_found", f"Message {uid} not found in {folder}")
+                return _error(
+                    404, "not_found",
+                    f"Message {uid} not found in {folder}",
+                )
             raw = data[0][1]
             if not isinstance(raw, bytes):
-                return _error(404, "not_found", f"Message {uid} not found in {folder}")
-            record = _parse_message(uid, raw)
-            record["folder"] = folder
+                return _error(
+                    404, "not_found",
+                    f"Message {uid} not found in {folder}",
+                )
+            record = _parse_message(
+                uid, raw, folder, download, download_path
+            )
             return serialize(record, label=_LABEL)
     except imaplib.IMAP4.error as e:
         return _error(500, "imap_error", str(e))
@@ -263,12 +365,11 @@ def _fetch_list(
     try:
         with _connect(cfg) as conn:
             conn.select(f'"{folder}"', readonly=True)
-            status, data = conn.uid("SEARCH", None, criteria)
+            status, data = conn.uid("SEARCH", "UTF-8", criteria)
             if status != "OK":
                 return _error(500, "imap_error", "SEARCH failed")
 
             uid_list = data[0].split() if data[0] else []
-            # Most recent first
             uid_list = list(reversed(uid_list))[:page_size]
 
             if not uid_list:
@@ -285,12 +386,9 @@ def _fetch_list(
             for item in data:
                 if not isinstance(item, tuple) or len(item) < 2:
                     continue
-                # Extract UID from response line
                 uid_match = re.search(rb"UID (\d+)", item[0])
                 uid = uid_match.group(1).decode() if uid_match else "?"
-                record = _parse_envelope(uid, item[1])
-                record["folder"] = folder
-                records.append(record)
+                records.append(_parse_envelope(uid, item[1], folder))
 
             return serialize(records, label=_LABEL)
     except imaplib.IMAP4.error as e:
@@ -300,9 +398,9 @@ def _fetch_list(
 
 
 def delete(document: str, cfg: MailConfig) -> str:
-    """Handle a JMD delete request for email.
+    r"""Handle a JMD delete request for email.
 
-    Marks the message as \\Deleted and expunges it.
+    Marks the message as \Deleted and expunges it.
 
     Args:
         document: JMD delete document string.
@@ -313,7 +411,9 @@ def delete(document: str, cfg: MailConfig) -> str:
     """
     mode = jmd_mode(document)
     if mode != "delete":
-        return _error(400, "invalid_mode", "delete requires a #- Message document")
+        return _error(
+            400, "invalid_mode", "delete requires a #- Message document"
+        )
 
     parsed = JMDDeleteParser().parse(document)
     ids = parsed.identifiers
@@ -328,9 +428,15 @@ def delete(document: str, cfg: MailConfig) -> str:
             conn.select(f'"{folder}"')
             status, _ = conn.uid("STORE", uid, "+FLAGS", r"(\Deleted)")
             if status != "OK":
-                return _error(404, "not_found", f"Message {uid} not found in {folder}")
+                return _error(
+                    404, "not_found",
+                    f"Message {uid} not found in {folder}",
+                )
             conn.expunge()
-            return serialize({"deleted": 1, "id": uid, "folder": folder}, label=_LABEL)
+            return serialize(
+                {"deleted": 1, "id": uid, "folder": folder},
+                label=_LABEL,
+            )
     except imaplib.IMAP4.error as e:
         return _error(500, "imap_error", str(e))
     except OSError as e:

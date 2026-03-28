@@ -51,6 +51,8 @@ def load() -> MailConfig:
         )
 
     fields = jmd_to_dict(_CONFIG_PATH.read_text(encoding="utf-8"))
+    if not isinstance(fields, dict):
+        raise ValueError("mail.jmd: expected a single document")
 
     smtp_host = str(fields.get("smtp_host", "")).strip()
     imap_host = str(fields.get("imap_host", "")).strip()
@@ -85,11 +87,13 @@ def load() -> MailConfig:
     )
 
 
-def _int_field(fields: dict, key: str, default: int) -> int:
+def _int_field(
+    fields: dict[str, object], key: str, default: int
+) -> int:
     """Parse an integer field from config, falling back to default."""
     raw = fields.get(key, default)
     try:
-        return int(raw)
+        return int(str(raw))
     except (TypeError, ValueError) as exc:
         raise ValueError(
             f"mail.jmd: '{key}' must be an integer, got {raw!r}"
