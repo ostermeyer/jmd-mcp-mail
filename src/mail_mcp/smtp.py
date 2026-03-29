@@ -14,6 +14,7 @@ from email.message import EmailMessage
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formatdate
 from pathlib import Path
 
 import markdown as md
@@ -22,6 +23,12 @@ from jmd import jmd_mode, jmd_to_dict, serialize
 from .config import MailConfig, resolve
 
 _LABEL = "Message"
+_REPO_URL = "https://github.com/ostermeyer/jmd-mcp-mail"
+_FOOTER = (
+    "\n\n---\n"
+    "*This email was sent by an AI assistant using "
+    f"[jmd-mcp-mail]({_REPO_URL}).*"
+)
 
 
 def send(document: str, cfgs: dict[str, MailConfig]) -> str:
@@ -73,12 +80,14 @@ def send(document: str, cfgs: dict[str, MailConfig]) -> str:
                 if p:
                     attach_paths.append(Path(p))
 
-    html_body = md.markdown(body)
+    body_with_footer = body + _FOOTER
+    html_body = md.markdown(body_with_footer)
+    date = formatdate(usegmt=True)
 
     if attach_paths:
         msg_obj = _build_multipart(
             cfg.username, to_addrs, cc_addrs, subject,
-            body, html_body, attach_paths,
+            body_with_footer, html_body, attach_paths, date,
         )
         raw_bytes = msg_obj.as_bytes()
     else:
@@ -86,9 +95,10 @@ def send(document: str, cfgs: dict[str, MailConfig]) -> str:
         plain_msg["From"] = cfg.username
         plain_msg["To"] = ", ".join(to_addrs)
         plain_msg["Subject"] = subject
+        plain_msg["Date"] = date
         if cc_addrs:
             plain_msg["Cc"] = ", ".join(cc_addrs)
-        plain_msg.set_content(body)
+        plain_msg.set_content(body_with_footer)
         plain_msg.add_alternative(html_body, subtype="html")
         raw_bytes = plain_msg.as_bytes()
 
@@ -133,12 +143,14 @@ def _build_multipart(
     plain: str,
     html: str,
     attach_paths: list[Path],
+    date: str,
 ) -> MIMEMultipart:
     """Build a multipart/mixed message with alternative body + attachments."""
     outer = MIMEMultipart("mixed")
     outer["From"] = sender
     outer["To"] = ", ".join(to_addrs)
     outer["Subject"] = subject
+    outer["Date"] = date
     if cc_addrs:
         outer["Cc"] = ", ".join(cc_addrs)
 
