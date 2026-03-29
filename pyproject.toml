@@ -7,7 +7,7 @@ name = "jmd-mcp-mail"
 version = "0.1"
 description = "JMD-native MCP server for email — IMAP/SMTP access for LLM agents"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = { text = "AGPL-3.0-only" }
 authors = [{ name = "Andreas Ostermeyer", email = "andreas@ostermeyer.de" }]
 requires-python = ">=3.10"
 keywords = ["jmd", "mcp", "imap", "smtp", "email", "llm"]
