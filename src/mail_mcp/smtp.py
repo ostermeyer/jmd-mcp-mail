@@ -1,6 +1,6 @@
 """SMTP sender for jmd-mcp-mail.
 
-Composes and sends email messages from JMD Message documents.
+Composes and sends email messages described by JMD Message documents.
 Message bodies are treated as Markdown and sent as multipart/alternative
 (plain text + HTML). File attachments are supported via an attachments[]
 array field.
@@ -9,6 +9,7 @@ Uses smtplib (stdlib) with STARTTLS.
 from __future__ import annotations
 
 import smtplib
+from email import encoders as email_encoders
 from email.message import EmailMessage
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -37,10 +38,12 @@ def send(document: str, cfg: MailConfig) -> str:
     if mode != "data":
         return _error(
             400, "invalid_mode",
-            "write requires a data document (# Message)",
+            "send requires a data document (# Message)",
         )
 
     fields = jmd_to_dict(document)
+    if not isinstance(fields, dict):
+        return _error(400, "invalid_document", "Expected a Message object")
 
     to_raw = str(fields.get("to", "")).strip()
     subject = str(fields.get("subject", "")).strip()
@@ -61,7 +64,6 @@ def send(document: str, cfg: MailConfig) -> str:
     bcc_addrs = [a.strip() for a in bcc_raw.split(",") if a.strip()]
     all_recipients = to_addrs + cc_addrs + bcc_addrs
 
-    # Resolve attachment paths
     attach_paths: list[Path] = []
     if isinstance(attachments_raw, list):
         for item in attachments_raw:
@@ -96,25 +98,25 @@ def send(document: str, cfg: MailConfig) -> str:
             conn.ehlo()
             conn.login(cfg.username, cfg.password)
             conn.sendmail(cfg.username, all_recipients, raw_bytes)
-    except smtplib.SMTPAuthenticationError as e:
+    except smtplib.SMTPAuthenticationError as exc:
         err_msg = (
-            e.smtp_error.decode()
-            if isinstance(e.smtp_error, bytes)
-            else str(e.smtp_error)
+            exc.smtp_error.decode()
+            if isinstance(exc.smtp_error, bytes)
+            else str(exc.smtp_error)
         )
         return _error(
             401, "auth_failed",
             f"SMTP authentication failed: {err_msg}",
         )
-    except smtplib.SMTPRecipientsRefused as e:
-        refused = ", ".join(e.recipients)
+    except smtplib.SMTPRecipientsRefused as exc:
+        refused = ", ".join(exc.recipients)
         return _error(
             400, "recipients_refused", f"Recipients refused: {refused}"
         )
-    except smtplib.SMTPException as e:
-        return _error(500, "smtp_error", str(e))
-    except OSError as e:
-        return _error(500, "connection_error", str(e))
+    except smtplib.SMTPException as exc:
+        return _error(500, "smtp_error", str(exc))
+    except OSError as exc:
+        return _error(500, "connection_error", str(exc))
 
     return serialize(
         {"to": ", ".join(to_addrs), "subject": subject, "status": "sent"},
@@ -149,8 +151,7 @@ def _build_multipart(
             continue
         part = MIMEBase("application", "octet-stream")
         part.set_payload(path.read_bytes())
-        from email import encoders
-        encoders.encode_base64(part)
+        email_encoders.encode_base64(part)
         part.add_header(
             "Content-Disposition",
             "attachment",
@@ -162,7 +163,7 @@ def _build_multipart(
 
 
 def _error(status: int, code: str, message: str) -> str:
-    """Serialise a JMD error document."""
+    """Serialize a JMD error document."""
     return serialize(
         {"status": status, "code": code, "message": message},
         label="Error",
