@@ -26,38 +26,49 @@ using JMD as the message format.  Four resource types are supported:
 
 ## Configuration
 
-Create ~/.config/jmd/mail.jmd:
+Create ~/.config/jmd/mail.jmd with one or more accounts:
 
-  # MailConfig
-  smtp-host: smtp.example.com
-  smtp-port: 587
-  imap-host: imap.example.com
-  imap-port: 993
-  username: you@example.com
+  # MailConfig[]
+  - name: ionos
+    smtp-host: smtp.ionos.de
+    smtp-port: 587
+    imap-host: imap.ionos.de
+    imap-port: 993
+    username: you@ionos.de
+  - name: apple
+    smtp-host: smtp.mail.me.com
+    smtp-port: 587
+    imap-host: imap.mail.me.com
+    imap-port: 993
+    username: you@icloud.com
 
-Store password in keyring (via jmd-mcp-keyring):
+Store passwords in keyring (via jmd-mcp-keyring):
 
   write("# Credentials\\nservice: jmd-mcp-mail\\n"
-        "username: you@example.com\\npassword: secret")
+        "username: you@ionos.de\\npassword: secret")
 
-## Folder navigation
+## Multi-account routing
 
-  read("# MailBox")                    → account info
+Add 'mailbox: <name>' to any document to select the account.
+Defaults to the first configured account if omitted.
+
+  read("#? Message\\nmailbox: apple\\nfolder: INBOX")
+  send("# Message\\nmailbox: ionos\\nto: x@y.com\\nsubject: Hi\\nbody: …")
+
+## Mailbox navigation
+
+  read("# MailBox[]")                  → all configured accounts
+  read("# MailBox\\nname: ionos")      → one account's details
   read("# Folder[]")                   → all root folders
   read("# Folder\\npath: INBOX")       → folder detail + counts
   read("#? Folder\\nparent: INBOX")    → subfolders of INBOX
-  write("# Folder\\npath: Archive")    → create folder
-  write("rename-to: Old\\n\\n# Folder\\npath: Archive")  → rename
-  delete("#- Folder\\npath: Archive")  → delete folder
 
 ## Message operations
 
-  read("#? Message\\nfolder: INBOX")                → list (headers only)
-  read("#? Message\\nfrom: ~alice")                 → filter by sender
-  read("# Message\\nid: 42\\nfolder: INBOX")        → full message with body
-  read("download-path: ~/Downloads\\n\\n# Message\\nid: 42\\nfolder: INBOX")
-                                                    → download attachments
-  delete("#- Message\\nid: 42\\nfolder: INBOX")     → delete message
+  read("#? Message\\nfolder: INBOX")              → list (headers only)
+  read("#? Message\\nfrom: ~alice")               → filter by sender
+  read("# Message\\nid: 42\\nfolder: INBOX")      → full message with body
+  delete("#- Message\\nid: 42\\nfolder: INBOX")   → delete message
 
 ## Message write operations
 
@@ -68,10 +79,6 @@ Updating flags (\\Seen is set by the human, NOT automatically on read):
 Moving a message (WARNING: requires two IMAP round-trips):
 
   write("move-to: Archive\\n\\n# Message\\nid: 42\\nfolder: INBOX")
-
-Copying a message (WARNING: requires two IMAP round-trips):
-
-  write("copy-to: Backup\\n\\n# Message\\nid: 42\\nfolder: INBOX")
 
 ## Sending email
 
@@ -90,33 +97,34 @@ Optional: cc, bcc (comma-separated), ## attachments[] with path fields.
 
 mcp = FastMCP("jmd-mcp-mail", instructions=_INSTRUCTIONS)
 
-_cfg: config.MailConfig | None = None
+_cfgs: dict[str, config.MailConfig] | None = None
 
 
-def _get_cfg() -> config.MailConfig:
-    """Return cached mail config, loading on first call."""
-    global _cfg
-    if _cfg is None:
-        _cfg = config.load()
-    return _cfg
+def _get_cfgs() -> dict[str, config.MailConfig]:
+    """Return cached mail configs, loading on first call."""
+    global _cfgs
+    if _cfgs is None:
+        _cfgs = config.load()
+    return _cfgs
 
 
 @mcp.tool()
 async def read(document: str) -> str:
     """Read IMAP resources using a JMD document.
 
-    Supported labels: MailBox, Folder, Folder[], Message.
+    Supported labels: MailBox, MailBox[], Folder, Folder[], Message.
 
     Schema:    #! MailBox / #! Folder / #! Message / #! EmailAddress
-    Read:      # MailBox | # Folder[] | # Folder (path: X)
-               # Message (id: X, folder: Y)
+    Read:      # MailBox[] | # MailBox (name: X) | # Folder[]
+               # Folder (path: X) | # Message (id: X, folder: Y)
     Query:     #? Folder [parent: X]
                #? Message [folder: X, from: ~X, subject: ~X]
 
     Pagination frontmatter: page, page-size, count (before the #? heading).
+    Multi-account: add 'mailbox: <name>' to route to a specific account.
     """
     try:
-        return await imap_read.read(document, _get_cfg())
+        return await imap_read.read(document, _get_cfgs())
     except (FileNotFoundError, ValueError) as exc:
         return _error(500, "config_error", str(exc))
 
@@ -137,9 +145,11 @@ async def write(document: str) -> str:
     Move/copy (frontmatter, two round-trips — use deliberately):
       move-to: Archive\\n\\n# Message  id: 42  folder: INBOX
       copy-to: Backup\\n\\n# Message  id: 42  folder: INBOX
+
+    Multi-account: add 'mailbox: <name>' to route to a specific account.
     """
     try:
-        return await imap_write.write(document, _get_cfg())
+        return await imap_write.write(document, _get_cfgs())
     except (FileNotFoundError, ValueError) as exc:
         return _error(500, "config_error", str(exc))
 
@@ -153,9 +163,10 @@ async def delete(document: str) -> str:
 
     The deleted resource is returned as a full JMD data document.
     Message deletion is permanent (\\Deleted + EXPUNGE).
+    Multi-account: add 'mailbox: <name>' to route to a specific account.
     """
     try:
-        return await imap_delete.delete(document, _get_cfg())
+        return await imap_delete.delete(document, _get_cfgs())
     except (FileNotFoundError, ValueError) as exc:
         return _error(500, "config_error", str(exc))
 
@@ -174,10 +185,11 @@ def send(document: str) -> str:
       > Message text in **Markdown**
 
     Attachments via ## attachments[] with path fields (local file paths).
+    Multi-account: add 'mailbox: <name>' to route to a specific account.
     Returns a confirmation document on success.
     """
     try:
-        return smtp.send(document, _get_cfg())
+        return smtp.send(document, _get_cfgs())
     except (FileNotFoundError, ValueError) as exc:
         return smtp._error(500, "config_error", str(exc))
 

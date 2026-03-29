@@ -58,6 +58,7 @@ class MessageRecord:
     size: int
     body: str
     attachments: list[AttachmentRecord]
+    mailbox: str = ""
 
 
 @dataclasses.dataclass(slots=True)
@@ -71,6 +72,7 @@ class FolderRecord:
     flags: list[str]
     messages: int | None = None
     unseen: int | None = None
+    mailbox: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -456,21 +458,24 @@ def message_to_dict(rec: MessageRecord) -> dict[str, object]:
         "folder": rec.folder,
         "subject": rec.subject,
         "date": rec.date,
-        "from": address_to_dict(rec.from_),
-        "to": [address_to_dict(a) for a in rec.to],
     }
+    if rec.mailbox:
+        d["mailbox"] = rec.mailbox
     if rec.size:
         d["size"] = rec.size
+    if rec.body:
+        d["body"] = rec.body
+    if rec.flags:
+        d["flags"] = rec.flags
+    # Nested objects must come after all scalar fields.
+    d["from"] = address_to_dict(rec.from_)
+    d["to"] = [address_to_dict(a) for a in rec.to]
     if rec.cc:
         d["cc"] = [address_to_dict(a) for a in rec.cc]
     if rec.bcc:
         d["bcc"] = [address_to_dict(a) for a in rec.bcc]
     if rec.reply_to:
         d["reply-to"] = [address_to_dict(a) for a in rec.reply_to]
-    if rec.flags:
-        d["flags"] = rec.flags
-    if rec.body:
-        d["body"] = rec.body
     if rec.attachments:
         d["attachments"] = [attachment_to_dict(a) for a in rec.attachments]
     return d
@@ -490,6 +495,8 @@ def folder_to_dict(rec: FolderRecord) -> dict[str, object]:
         "path": rec.path,
         "delim": rec.delim,
     }
+    if rec.mailbox:
+        d["mailbox"] = rec.mailbox
     if rec.parent is not None:
         d["parent"] = rec.parent
     if rec.flags:

@@ -1,11 +1,13 @@
 """Configuration for jmd-mcp-mail.
 
 Reads mail settings from ~/.config/jmd/mail.jmd.
-The account password is retrieved from the OS keyring
+Supports a single # MailConfig account or a # MailConfig[] list.
+Passwords are retrieved from the OS keyring
 (service: jmd-mcp-mail, username: <configured username>).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,11 +17,15 @@ from jmd import jmd_to_dict
 _CONFIG_PATH = Path.home() / ".config" / "jmd" / "mail.jmd"
 _KEYRING_SERVICE = "jmd-mcp-mail"
 
+# Matches 'mailbox: value' at the top level of any JMD document.
+_MAILBOX_RE = re.compile(r"^mailbox:\s*(.+)$", re.MULTILINE)
+
 
 @dataclass
 class MailConfig:
-    """Mail connection parameters for SMTP and IMAP."""
+    """Mail connection parameters for one account."""
 
+    name: str
     smtp_host: str
     smtp_port: int
     imap_host: str
@@ -28,11 +34,38 @@ class MailConfig:
     password: str
 
 
-def load() -> MailConfig:
-    """Load mail configuration from ~/.config/jmd/mail.jmd.
+def resolve(document: str, cfgs: dict[str, MailConfig]) -> MailConfig:
+    """Return the MailConfig named by 'mailbox:' in document, or first.
+
+    Args:
+        document: Any JMD document string.
+        cfgs: All loaded configs keyed by name.
 
     Returns:
-        MailConfig with SMTP/IMAP parameters and password from keyring.
+        The matching MailConfig.
+
+    Raises:
+        ValueError: If the named mailbox is not configured.
+    """
+    m = _MAILBOX_RE.search(document)
+    if m:
+        name = m.group(1).strip()
+        if name not in cfgs:
+            raise ValueError(
+                f"Unknown mailbox: {name!r}. Configured: {list(cfgs)}"
+            )
+        return cfgs[name]
+    return next(iter(cfgs.values()))
+
+
+def load() -> dict[str, MailConfig]:
+    """Load mail configuration from ~/.config/jmd/mail.jmd.
+
+    Supports both a single # MailConfig and a # MailConfig[] list.
+    Field names may be kebab-case (smtp-host) or snake_case (smtp_host).
+
+    Returns:
+        Dict mapping account name → MailConfig.
 
     Raises:
         FileNotFoundError: If the config file does not exist.
@@ -43,41 +76,106 @@ def load() -> MailConfig:
             f"Mail config not found: {_CONFIG_PATH}\n"
             "Create ~/.config/jmd/mail.jmd with:\n"
             "  # MailConfig\n"
-            "  smtp_host: smtp.example.com\n"
-            "  smtp_port: 587\n"
-            "  imap_host: imap.example.com\n"
-            "  imap_port: 993\n"
+            "  name: myaccount\n"
+            "  smtp-host: smtp.example.com\n"
+            "  smtp-port: 587\n"
+            "  imap-host: imap.example.com\n"
+            "  imap-port: 993\n"
             "  username: you@example.com"
         )
 
-    fields = jmd_to_dict(_CONFIG_PATH.read_text(encoding="utf-8"))
-    if not isinstance(fields, dict):
-        raise ValueError("mail.jmd: expected a single document")
+    raw = jmd_to_dict(_CONFIG_PATH.read_text(encoding="utf-8"))
 
-    smtp_host = str(fields.get("smtp_host", "")).strip()
-    imap_host = str(fields.get("imap_host", "")).strip()
-    username = str(fields.get("username", "")).strip()
+    if isinstance(raw, dict):
+        entries = [raw]
+    elif isinstance(raw, list):
+        entries = [e for e in raw if isinstance(e, dict)]
+    else:
+        raise ValueError("mail.jmd: expected # MailConfig or # MailConfig[]")
+
+    if not entries:
+        raise ValueError("mail.jmd: no accounts configured")
+
+    cfgs: dict[str, MailConfig] = {}
+    for fields in entries:
+        cfg = _parse_one(fields)
+        cfgs[cfg.name] = cfg
+    return cfgs
+
+
+def config_path() -> Path:
+    """Return the path to the JMD mail config file."""
+    return _CONFIG_PATH
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _field(
+    fields: dict[str, object],
+    *keys: str,
+    default: str = "",
+) -> str:
+    """Return first matching key value as string, supporting kebab/snake."""
+    for key in keys:
+        val = fields.get(key)
+        if val is not None:
+            return str(val).strip()
+    return default
+
+
+def _int_field(
+    fields: dict[str, object],
+    *keys: str,
+    default: int,
+) -> int:
+    """Parse an integer from first matching key, falling back to default."""
+    for key in keys:
+        raw = fields.get(key)
+        if raw is not None:
+            try:
+                return int(str(raw))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"mail.jmd: {key!r} must be an integer, got {raw!r}"
+                ) from exc
+    return default
+
+
+def _parse_one(fields: dict[str, object]) -> MailConfig:
+    """Parse a single MailConfig entry from a dict of fields."""
+    smtp_host = _field(fields, "smtp-host", "smtp_host")
+    imap_host = _field(fields, "imap-host", "imap_host")
+    username = _field(fields, "username")
+    name = _field(fields, "name") or username
 
     if not smtp_host:
-        raise ValueError("mail.jmd: 'smtp_host' is required")
+        raise ValueError("mail.jmd: 'smtp-host' is required")
     if not imap_host:
-        raise ValueError("mail.jmd: 'imap_host' is required")
+        raise ValueError("mail.jmd: 'imap-host' is required")
     if not username:
         raise ValueError("mail.jmd: 'username' is required")
 
-    smtp_port = _int_field(fields, "smtp_port", default=587)
-    imap_port = _int_field(fields, "imap_port", default=993)
+    smtp_port = _int_field(
+        fields, "smtp-port", "smtp_port", default=587
+    )
+    imap_port = _int_field(
+        fields, "imap-port", "imap_port", default=993
+    )
 
     password = keyring.get_password(_KEYRING_SERVICE, username)
     if password is None:
         raise ValueError(
             f"No password in keyring for {_KEYRING_SERVICE}/{username}.\n"
-            "Store it first via jmd-mcp-keyring:\n"
+            "Store it via jmd-mcp-keyring:\n"
             f"  write('# Credentials\\nservice: {_KEYRING_SERVICE}"
             f"\\nusername: {username}\\npassword: <your-password>')"
         )
 
     return MailConfig(
+        name=name,
         smtp_host=smtp_host,
         smtp_port=smtp_port,
         imap_host=imap_host,
@@ -85,21 +183,3 @@ def load() -> MailConfig:
         username=username,
         password=password,
     )
-
-
-def _int_field(
-    fields: dict[str, object], key: str, default: int
-) -> int:
-    """Parse an integer field from config, falling back to default."""
-    raw = fields.get(key, default)
-    try:
-        return int(str(raw))
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"mail.jmd: '{key}' must be an integer, got {raw!r}"
-        ) from exc
-
-
-def config_path() -> Path:
-    """Return the path to the JMD mail config file."""
-    return _CONFIG_PATH

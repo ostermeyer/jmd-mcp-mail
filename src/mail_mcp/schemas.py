@@ -3,6 +3,7 @@ from __future__ import annotations
 
 MAILBOX: str = """\
 #! MailBox
+name: string readonly
 username: string email readonly
 imap-host: string readonly
 imap-port: integer readonly
@@ -13,6 +14,7 @@ FOLDER: str = """\
 #! Folder
 name: string readonly
 path: string readonly
+mailbox: string optional
 parent: string readonly optional
 delim: string readonly
 messages: integer readonly optional
@@ -29,6 +31,7 @@ MESSAGE: str = """\
 #! Message
 id: string readonly
 folder: string readonly
+mailbox: string optional
 subject: string readonly
 date: string datetime readonly
 size: integer readonly optional

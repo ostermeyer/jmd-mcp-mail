@@ -16,16 +16,19 @@ from mail_mcp.config import MailConfig
 
 
 @pytest.fixture
-def cfg() -> MailConfig:
-    """Return a MailConfig with example.com placeholders."""
-    return MailConfig(
-        smtp_host="smtp.example.com",
-        smtp_port=587,
-        imap_host="imap.example.com",
-        imap_port=993,
-        username="user@example.com",
-        password="test-password",
-    )
+def cfg() -> dict[str, MailConfig]:
+    """Return a single-account cfgs dict with example.com placeholders."""
+    return {
+        "test": MailConfig(
+            name="test",
+            smtp_host="smtp.example.com",
+            smtp_port=587,
+            imap_host="imap.example.com",
+            imap_port=993,
+            username="user@example.com",
+            password="test-password",
+        )
+    }
 
 
 @pytest.fixture
@@ -42,14 +45,14 @@ def mock_smtp() -> Generator[MagicMock, None, None]:
 # Validation errors
 # ---------------------------------------------------------------------------
 
-def test_send_missing_to(cfg: MailConfig) -> None:
+def test_send_missing_to(cfg: dict[str, MailConfig]) -> None:
     """Missing 'to' field returns 400 error."""
     result = smtp.send("# Message\nsubject: Hi\nbody: Text", cfg)
     assert "# Error" in result
     assert "400" in result
 
 
-def test_send_missing_subject(cfg: MailConfig) -> None:
+def test_send_missing_subject(cfg: dict[str, MailConfig]) -> None:
     """Missing 'subject' field returns 400 error."""
     result = smtp.send(
         "# Message\nto: r@example.com\nbody: Text", cfg
@@ -58,7 +61,7 @@ def test_send_missing_subject(cfg: MailConfig) -> None:
     assert "400" in result
 
 
-def test_send_missing_body(cfg: MailConfig) -> None:
+def test_send_missing_body(cfg: dict[str, MailConfig]) -> None:
     """Missing 'body' field returns 400 error."""
     result = smtp.send(
         "# Message\nto: r@example.com\nsubject: Hi", cfg
@@ -67,7 +70,7 @@ def test_send_missing_body(cfg: MailConfig) -> None:
     assert "400" in result
 
 
-def test_send_invalid_mode(cfg: MailConfig) -> None:
+def test_send_invalid_mode(cfg: dict[str, MailConfig]) -> None:
     """Query document passed to send returns 400 with invalid_mode."""
     result = smtp.send("#? Message\nto: r@example.com", cfg)
     assert "# Error" in result
@@ -78,7 +81,7 @@ def test_send_invalid_mode(cfg: MailConfig) -> None:
 # Successful send
 # ---------------------------------------------------------------------------
 
-def test_send_success(cfg: MailConfig, mock_smtp: MagicMock) -> None:
+def test_send_success(cfg: dict[str, MailConfig], mock_smtp: MagicMock) -> None:
     """Valid message is sent and confirmation document returned."""
     doc = (
         "# Message\n"
@@ -93,7 +96,7 @@ def test_send_success(cfg: MailConfig, mock_smtp: MagicMock) -> None:
 
 
 def test_send_includes_cc_in_recipients(
-    cfg: MailConfig, mock_smtp: MagicMock
+    cfg: dict[str, MailConfig], mock_smtp: MagicMock
 ) -> None:
     """CC recipients are included in the sendmail call."""
     doc = (
@@ -109,7 +112,7 @@ def test_send_includes_cc_in_recipients(
 
 
 def test_send_bcc_not_in_headers(
-    cfg: MailConfig, mock_smtp: MagicMock
+    cfg: dict[str, MailConfig], mock_smtp: MagicMock
 ) -> None:
     """BCC recipients appear in sendmail call but not in message headers."""
     doc = (
@@ -129,7 +132,7 @@ def test_send_bcc_not_in_headers(
 # SMTP errors
 # ---------------------------------------------------------------------------
 
-def test_send_auth_failure(cfg: MailConfig) -> None:
+def test_send_auth_failure(cfg: dict[str, MailConfig]) -> None:
     """SMTPAuthenticationError returns 401 error document."""
     with patch("mail_mcp.smtp.smtplib.SMTP") as mock_cls:
         mock_conn = MagicMock()
@@ -146,7 +149,7 @@ def test_send_auth_failure(cfg: MailConfig) -> None:
     assert "401" in result
 
 
-def test_send_recipients_refused(cfg: MailConfig) -> None:
+def test_send_recipients_refused(cfg: dict[str, MailConfig]) -> None:
     """SMTPRecipientsRefused returns 400 error document."""
     with patch("mail_mcp.smtp.smtplib.SMTP") as mock_cls:
         mock_conn = MagicMock()

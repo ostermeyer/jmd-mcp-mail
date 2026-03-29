@@ -5,7 +5,7 @@ import imaplib
 
 from jmd import JMDParser, jmd_mode, jmd_to_dict, serialize
 
-from mail_mcp.config import MailConfig
+from mail_mcp.config import MailConfig, resolve
 from mail_mcp.imap._connection import encode_folder, imap_call, open_imap
 from mail_mcp.imap._parse import (
     folder_to_dict,
@@ -24,7 +24,7 @@ _LABEL_MESSAGE = "Message"
 # ---------------------------------------------------------------------------
 
 
-async def write(document: str, cfg: MailConfig) -> str:
+async def write(document: str, cfgs: dict[str, MailConfig]) -> str:
     """Dispatch a JMD data document to the appropriate IMAP write handler.
 
     Routing:
@@ -33,7 +33,7 @@ async def write(document: str, cfg: MailConfig) -> str:
 
     Args:
         document: JMD data document string.
-        cfg: Mail configuration.
+        cfgs: All configured mail accounts.
 
     Returns:
         JMD response document.
@@ -45,6 +45,7 @@ async def write(document: str, cfg: MailConfig) -> str:
             "write requires a data document (# Folder or # Message)",
         )
 
+    cfg = resolve(document, cfgs)
     parser = JMDParser()
     parser.parse(document)
     fm = parser.frontmatter
@@ -115,10 +116,14 @@ async def _write_folder(
                     if isinstance(item, bytes):
                         rec = parse_list_item(item)
                         if rec is not None:
+                            rec.mailbox = cfg.name
                             return serialize(
                                 folder_to_dict(rec), label=_LABEL_FOLDER
                             )
-            return serialize({"path": result_path}, label=_LABEL_FOLDER)
+            return serialize(
+                {"path": result_path, "mailbox": cfg.name},
+                label=_LABEL_FOLDER,
+            )
     except imaplib.IMAP4.error as exc:
         return _error(500, "imap_error", str(exc))
     except OSError as exc:
@@ -195,9 +200,13 @@ async def _update_flags(
                 raw = data[0][1]
                 if isinstance(raw, bytes):
                     rec = parse_message(uid, raw, folder)
-                    return serialize(message_to_dict(rec), label=_LABEL_MESSAGE)
+                    rec.mailbox = cfg.name
+                    return serialize(
+                        message_to_dict(rec), label=_LABEL_MESSAGE
+                    )
             return serialize(
-                {"id": uid, "folder": folder}, label=_LABEL_MESSAGE
+                {"id": uid, "folder": folder, "mailbox": cfg.name},
+                label=_LABEL_MESSAGE,
             )
     except imaplib.IMAP4.error as exc:
         return _error(500, "imap_error", str(exc))
@@ -271,12 +280,17 @@ async def _move_message(
                     raw = data3[0][1]
                     if isinstance(raw, bytes):
                         rec = parse_message(new_uid, raw, dst_folder)
+                        rec.mailbox = cfg.name
                         return serialize(
                             message_to_dict(rec), label=_LABEL_MESSAGE
                         )
 
             return serialize(
-                {"id": new_uid or "unknown", "folder": dst_folder},
+                {
+                    "id": new_uid or "unknown",
+                    "folder": dst_folder,
+                    "mailbox": cfg.name,
+                },
                 label=_LABEL_MESSAGE,
             )
     except imaplib.IMAP4.error as exc:
@@ -341,12 +355,17 @@ async def _copy_message(
                     raw = data3[0][1]
                     if isinstance(raw, bytes):
                         rec = parse_message(new_uid, raw, dst_folder)
+                        rec.mailbox = cfg.name
                         return serialize(
                             message_to_dict(rec), label=_LABEL_MESSAGE
                         )
 
             return serialize(
-                {"id": new_uid or "unknown", "folder": dst_folder},
+                {
+                    "id": new_uid or "unknown",
+                    "folder": dst_folder,
+                    "mailbox": cfg.name,
+                },
                 label=_LABEL_MESSAGE,
             )
     except imaplib.IMAP4.error as exc:

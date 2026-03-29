@@ -34,6 +34,11 @@ def _write(tmp_path: Path, content: str) -> None:
     (tmp_path / "mail.jmd").write_text(content, encoding="utf-8")
 
 
+def _first(cfgs: dict[str, config.MailConfig]) -> config.MailConfig:
+    """Return the first MailConfig from a load() result."""
+    return next(iter(cfgs.values()))
+
+
 # ---------------------------------------------------------------------------
 # load()
 # ---------------------------------------------------------------------------
@@ -45,26 +50,26 @@ def test_load_missing_file() -> None:
 
 
 def test_load_missing_smtp_host(tmp_path: Path) -> None:
-    """ValueError raised when smtp_host is missing."""
+    """ValueError raised when smtp-host is missing."""
     _write(
         tmp_path,
         "# MailConfig\n"
         "imap_host: imap.example.com\n"
         "username: u@example.com\n",
     )
-    with pytest.raises(ValueError, match="smtp_host"):
+    with pytest.raises(ValueError, match="smtp-host"):
         config.load()
 
 
 def test_load_missing_imap_host(tmp_path: Path) -> None:
-    """ValueError raised when imap_host is missing."""
+    """ValueError raised when imap-host is missing."""
     _write(
         tmp_path,
         "# MailConfig\n"
         "smtp_host: smtp.example.com\n"
         "username: u@example.com\n",
     )
-    with pytest.raises(ValueError, match="imap_host"):
+    with pytest.raises(ValueError, match="imap-host"):
         config.load()
 
 
@@ -96,7 +101,7 @@ def test_load_success(tmp_path: Path) -> None:
     with patch(
         "mail_mcp.config.keyring.get_password", return_value="secret"
     ):
-        cfg = config.load()
+        cfg = _first(config.load())
     assert cfg.smtp_host == "smtp.example.com"
     assert cfg.imap_host == "imap.example.com"
     assert cfg.username == "u@example.com"
@@ -117,6 +122,69 @@ def test_load_default_ports(tmp_path: Path) -> None:
     with patch(
         "mail_mcp.config.keyring.get_password", return_value="pw"
     ):
-        cfg = config.load()
+        cfg = _first(config.load())
     assert cfg.smtp_port == 587
     assert cfg.imap_port == 993
+
+
+def test_load_multi_account(tmp_path: Path) -> None:
+    """# MailConfig[] with two accounts loads both into the dict."""
+    _write(
+        tmp_path,
+        "# MailConfig[]\n"
+        "- name: ionos\n"
+        "  smtp-host: smtp.ionos.de\n"
+        "  smtp-port: 587\n"
+        "  imap-host: imap.ionos.de\n"
+        "  imap-port: 993\n"
+        "  username: a@ionos.de\n"
+        "- name: apple\n"
+        "  smtp-host: smtp.mail.me.com\n"
+        "  smtp-port: 587\n"
+        "  imap-host: imap.mail.me.com\n"
+        "  imap-port: 993\n"
+        "  username: a@icloud.com\n",
+    )
+    with patch(
+        "mail_mcp.config.keyring.get_password", return_value="pw"
+    ):
+        cfgs = config.load()
+    assert set(cfgs) == {"ionos", "apple"}
+    assert cfgs["ionos"].smtp_host == "smtp.ionos.de"
+    assert cfgs["apple"].imap_host == "imap.mail.me.com"
+
+
+def test_resolve_by_name(tmp_path: Path) -> None:
+    """resolve() picks the correct account by mailbox: field."""
+    _write(
+        tmp_path,
+        "# MailConfig[]\n"
+        "- name: a\n"
+        "  smtp-host: s1\n  imap-host: i1\n  username: u1@x.com\n"
+        "- name: b\n"
+        "  smtp-host: s2\n  imap-host: i2\n  username: u2@x.com\n",
+    )
+    with patch(
+        "mail_mcp.config.keyring.get_password", return_value="pw"
+    ):
+        cfgs = config.load()
+    cfg = config.resolve("mailbox: b\n\n# Message\nid: 1", cfgs)
+    assert cfg.name == "b"
+
+
+def test_resolve_default(tmp_path: Path) -> None:
+    """resolve() returns first account when no mailbox: field present."""
+    _write(
+        tmp_path,
+        "# MailConfig[]\n"
+        "- name: first\n"
+        "  smtp-host: s1\n  imap-host: i1\n  username: u1@x.com\n"
+        "- name: second\n"
+        "  smtp-host: s2\n  imap-host: i2\n  username: u2@x.com\n",
+    )
+    with patch(
+        "mail_mcp.config.keyring.get_password", return_value="pw"
+    ):
+        cfgs = config.load()
+    cfg = config.resolve("# Message\nid: 1", cfgs)
+    assert cfg.name == "first"

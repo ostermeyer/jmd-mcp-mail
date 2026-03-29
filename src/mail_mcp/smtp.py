@@ -19,21 +19,22 @@ from pathlib import Path
 import markdown as md
 from jmd import jmd_mode, jmd_to_dict, serialize
 
-from .config import MailConfig
+from .config import MailConfig, resolve
 
 _LABEL = "Message"
 
 
-def send(document: str, cfg: MailConfig) -> str:
+def send(document: str, cfgs: dict[str, MailConfig]) -> str:
     """Send an email described by a JMD Message document.
 
     Args:
         document: JMD data document with to, subject, body fields.
-        cfg: Mail configuration.
+        cfgs: All configured mail accounts.
 
     Returns:
         JMD confirmation document or # Error document.
     """
+    cfg = resolve(document, cfgs)
     mode = jmd_mode(document)
     if mode != "data":
         return _error(

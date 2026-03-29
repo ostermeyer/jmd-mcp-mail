@@ -42,7 +42,7 @@ def build(fields: list[QueryField]) -> str:
         vals = f.condition.values
 
         # Skip routing and pagination fields.
-        if key in ("folder", "page", "page-size", "count"):
+        if key in ("folder", "mailbox", "page", "page-size", "count"):
             continue
 
         # Flag criteria: seen: true / seen: false
