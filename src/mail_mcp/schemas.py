@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 MAILBOX: str = """\
+see-also: Folder, Message, EmailAddress
+
 #! MailBox
 name: string readonly
 username: string email readonly

@@ -73,6 +73,7 @@ async def read(document: str) -> str:
 
     Frontmatter policy: observable tolerance — unknown keys are
     echoed in the response as 'ignored-keys: ...'.
+    Debug frontmatter: 'debug: timing, mailbox' (composable).
     """
     try:
         fm = parse_frontmatter(document)
@@ -116,6 +117,7 @@ async def write(document: str) -> str:
 
     Frontmatter policy: observable tolerance — unknown keys are
     echoed in the response as 'ignored-keys: ...'.
+    Debug frontmatter: 'debug: timing, mailbox' (composable).
     """
     try:
         fm = parse_frontmatter(document)
@@ -145,6 +147,18 @@ async def delete(document: str) -> str:
     Folder:  confirm: drop-folder\\n\\n#- Folder  path: Archive
     Message: #- Message  id: 42  folder: INBOX
 
+    Bulk message delete (#- Message[]): delete many in one call.
+    List items may be scalar UIDs (defaults folder to INBOX) or
+    dicts with id and optional folder.
+
+        #- Message[]
+        - id: 42
+          folder: INBOX
+        - id: 43
+          folder: INBOX
+        - id: 44
+          folder: Archive
+
     The deleted resource is returned as a full JMD data document.
     Message deletion is permanent (\\Deleted + EXPUNGE).
     Folder deletion requires 'confirm: drop-folder' frontmatter
@@ -153,6 +167,7 @@ async def delete(document: str) -> str:
 
     Frontmatter policy: strict refusal — unknown keys cause a
     structured error (destructive operation, no silent drops).
+    Debug frontmatter: 'debug: timing, mailbox' (composable).
     """
     try:
         fm = parse_frontmatter(document)
@@ -190,6 +205,7 @@ def send(document: str) -> str:
 
     Frontmatter policy: observable tolerance — unknown keys are
     echoed in the response as 'ignored-keys: ...'.
+    Debug frontmatter: 'debug: timing, mailbox' (composable).
     """
     try:
         fm = parse_frontmatter(document)
