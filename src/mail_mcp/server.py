@@ -7,93 +7,41 @@ Password: OS keyring, service='jmd-mcp-mail', username=<configured username>
 """
 from __future__ import annotations
 
+import time
+
 from mcp.server.fastmcp import FastMCP
 
 from mail_mcp import config, smtp
+from mail_mcp._frontmatter import (
+    check_frontmatter,
+    parse_debug,
+    parse_frontmatter,
+    prepend_debug,
+    prepend_ignored_keys,
+)
 from mail_mcp.imap import delete as imap_delete
 from mail_mcp.imap import read as imap_read
 from mail_mcp.imap import write as imap_write
 from mail_mcp.imap.read import _error
 
-_INSTRUCTIONS = """
-This server provides email access via IMAP (read/write/delete) and SMTP (send)
-using JMD as the message format.  Four resource types are supported:
+# Known frontmatter keys per tool (observable tolerance / strict refusal).
+_KNOWN_FM_READ: frozenset[str] = frozenset({
+    "mailbox", "page", "page-size", "count", "debug",
+})
+_KNOWN_FM_WRITE: frozenset[str] = frozenset({
+    "mailbox", "rename-to", "move-to", "copy-to", "debug",
+})
+_KNOWN_FM_DELETE: frozenset[str] = frozenset({
+    "mailbox", "confirm", "debug",
+})
+_KNOWN_FM_SEND: frozenset[str] = frozenset({
+    "mailbox", "debug",
+})
 
-  MailBox      — account identity and connection info (read-only)
-  Folder       — IMAP mailboxes (full CRUD)
-  Message      — email messages (read, flag-update, move, copy, delete)
-  EmailAddress — embedded in Message (not a standalone resource)
-
-## Configuration
-
-Create ~/.config/jmd/mail.jmd with one or more accounts:
-
-  # MailConfig[]
-  - name: ionos
-    smtp-host: smtp.ionos.de
-    smtp-port: 587
-    imap-host: imap.ionos.de
-    imap-port: 993
-    username: you@ionos.de
-  - name: apple
-    smtp-host: smtp.mail.me.com
-    smtp-port: 587
-    imap-host: imap.mail.me.com
-    imap-port: 993
-    username: you@icloud.com
-
-Store passwords in keyring (via jmd-mcp-keyring):
-
-  write("# Credentials\\nservice: jmd-mcp-mail\\n"
-        "username: you@ionos.de\\npassword: secret")
-
-## Multi-account routing
-
-Add 'mailbox: <name>' to any document to select the account.
-Defaults to the first configured account if omitted.
-
-  read("#? Message\\nmailbox: apple\\nfolder: INBOX")
-  send("# Message\\nmailbox: ionos\\nto: x@y.com\\nsubject: Hi\\nbody: …")
-
-## Mailbox navigation
-
-  read("# MailBox[]")                  → all configured accounts
-  read("# MailBox\\nname: ionos")      → one account's details
-  read("# Folder[]")                   → all root folders
-  read("# Folder\\npath: INBOX")       → folder detail + counts
-  read("#? Folder\\nparent: INBOX")    → subfolders of INBOX
-
-## Message operations
-
-  read("#? Message\\nfolder: INBOX")              → list (headers only)
-  read("#? Message\\nfrom: ~alice")               → filter by sender
-  read("# Message\\nid: 42\\nfolder: INBOX")      → full message with body
-  delete("#- Message\\nid: 42\\nfolder: INBOX")   → delete message
-
-## Message write operations
-
-Updating flags (\\Seen is set by the human, NOT automatically on read):
-
-  write("# Message\\nid: 42\\nfolder: INBOX\\n## flags[]\\n- \\\\Seen")
-
-Moving a message (WARNING: requires two IMAP round-trips):
-
-  write("move-to: Archive\\n\\n# Message\\nid: 42\\nfolder: INBOX")
-
-## Sending email
-
-  send("# Message\\nto: alice@example.com\\n"
-       "subject: Hello\\nbody: Message text")
-
-Optional: cc, bcc (comma-separated), ## attachments[] with path fields.
-
-## Important notes
-
-- Messages are NEVER implicitly marked as \\Seen when read.
-  Only set \\Seen explicitly when the human has actually read the message.
-- move-to and copy-to require a second IMAP round-trip to resolve the new
-  UID via HEADER Message-ID search. Use sparingly.
-"""
+_INSTRUCTIONS = (
+    'This is JMD, not IMAP or SMTP.'
+    ' Read "# MailBox[]" to discover accounts.'
+)
 
 mcp = FastMCP("jmd-mcp-mail", instructions=_INSTRUCTIONS)
 
@@ -110,7 +58,7 @@ def _get_cfgs() -> dict[str, config.MailConfig]:
 
 @mcp.tool()
 async def read(document: str) -> str:
-    """Read IMAP resources using a JMD document.
+    """Read IMAP resources using a JMD document (https://github.com/ostermeyer/jmd-spec).
 
     Supported labels: MailBox, MailBox[], Folder, Folder[], Message.
 
@@ -122,16 +70,34 @@ async def read(document: str) -> str:
 
     Pagination frontmatter: page, page-size, count (before the #? heading).
     Multi-account: add 'mailbox: <name>' to route to a specific account.
+
+    Frontmatter policy: observable tolerance — unknown keys are
+    echoed in the response as 'ignored-keys: ...'.
     """
     try:
-        return await imap_read.read(document, _get_cfgs())
+        fm = parse_frontmatter(document)
+        ignored = check_frontmatter(
+            fm, _KNOWN_FM_READ, "observable",
+        )
+        dbg = parse_debug(fm)
+        if dbg.wants("mailbox"):
+            dbg.mailbox = str(fm.get("mailbox", "(default)"))
+        t0 = time.perf_counter()
+        result = await imap_read.read(document, _get_cfgs())
+        if dbg.active:
+            dbg.timing_ms = (
+                (time.perf_counter() - t0) * 1000
+            )
+        return prepend_debug(
+            prepend_ignored_keys(result, ignored), dbg,
+        )
     except (FileNotFoundError, ValueError) as exc:
         return _error(500, "config_error", str(exc))
 
 
 @mcp.tool()
 async def write(document: str) -> str:
-    r"""Write to IMAP: create/rename folders, update message flags, move/copy.
+    r"""Write to IMAP using a JMD document (https://github.com/ostermeyer/jmd-spec).
 
     Folder operations:
       # Folder  path: Archive              → create
@@ -147,33 +113,67 @@ async def write(document: str) -> str:
       copy-to: Backup\\n\\n# Message  id: 42  folder: INBOX
 
     Multi-account: add 'mailbox: <name>' to route to a specific account.
+
+    Frontmatter policy: observable tolerance — unknown keys are
+    echoed in the response as 'ignored-keys: ...'.
     """
     try:
-        return await imap_write.write(document, _get_cfgs())
+        fm = parse_frontmatter(document)
+        ignored = check_frontmatter(
+            fm, _KNOWN_FM_WRITE, "observable",
+        )
+        dbg = parse_debug(fm)
+        if dbg.wants("mailbox"):
+            dbg.mailbox = str(fm.get("mailbox", "(default)"))
+        t0 = time.perf_counter()
+        result = await imap_write.write(document, _get_cfgs())
+        if dbg.active:
+            dbg.timing_ms = (
+                (time.perf_counter() - t0) * 1000
+            )
+        return prepend_debug(
+            prepend_ignored_keys(result, ignored), dbg,
+        )
     except (FileNotFoundError, ValueError) as exc:
         return _error(500, "config_error", str(exc))
 
 
 @mcp.tool()
 async def delete(document: str) -> str:
-    r"""Delete an IMAP resource using a JMD delete document.
+    r"""Delete an IMAP resource using a JMD delete document (https://github.com/ostermeyer/jmd-spec).
 
-    Folder:  #- Folder  path: Archive
+    Folder:  confirm: drop-folder\\n\\n#- Folder  path: Archive
     Message: #- Message  id: 42  folder: INBOX
 
     The deleted resource is returned as a full JMD data document.
     Message deletion is permanent (\\Deleted + EXPUNGE).
+    Folder deletion requires 'confirm: drop-folder' frontmatter
+    because it removes all messages in the folder irreversibly.
     Multi-account: add 'mailbox: <name>' to route to a specific account.
+
+    Frontmatter policy: strict refusal — unknown keys cause a
+    structured error (destructive operation, no silent drops).
     """
     try:
-        return await imap_delete.delete(document, _get_cfgs())
+        fm = parse_frontmatter(document)
+        check_frontmatter(fm, _KNOWN_FM_DELETE, "strict")
+        dbg = parse_debug(fm)
+        if dbg.wants("mailbox"):
+            dbg.mailbox = str(fm.get("mailbox", "(default)"))
+        t0 = time.perf_counter()
+        result = await imap_delete.delete(document, _get_cfgs())
+        if dbg.active:
+            dbg.timing_ms = (
+                (time.perf_counter() - t0) * 1000
+            )
+        return prepend_debug(result, dbg)
     except (FileNotFoundError, ValueError) as exc:
         return _error(500, "config_error", str(exc))
 
 
 @mcp.tool()
 def send(document: str) -> str:
-    """Send an email via SMTP using a JMD Message document.
+    """Send an email via SMTP using a JMD Message document (https://github.com/ostermeyer/jmd-spec).
 
     Required fields: to, subject, body (Markdown).
     Optional fields: cc, bcc (comma-separated addresses).
@@ -187,9 +187,27 @@ def send(document: str) -> str:
     Attachments via ## attachments[] with path fields (local file paths).
     Multi-account: add 'mailbox: <name>' to route to a specific account.
     Returns a confirmation document on success.
+
+    Frontmatter policy: observable tolerance — unknown keys are
+    echoed in the response as 'ignored-keys: ...'.
     """
     try:
-        return smtp.send(document, _get_cfgs())
+        fm = parse_frontmatter(document)
+        ignored = check_frontmatter(
+            fm, _KNOWN_FM_SEND, "observable",
+        )
+        dbg = parse_debug(fm)
+        if dbg.wants("mailbox"):
+            dbg.mailbox = str(fm.get("mailbox", "(default)"))
+        t0 = time.perf_counter()
+        result = smtp.send(document, _get_cfgs())
+        if dbg.active:
+            dbg.timing_ms = (
+                (time.perf_counter() - t0) * 1000
+            )
+        return prepend_debug(
+            prepend_ignored_keys(result, ignored), dbg,
+        )
     except (FileNotFoundError, ValueError) as exc:
         return smtp._error(500, "config_error", str(exc))
 
