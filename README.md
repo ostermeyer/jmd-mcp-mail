@@ -118,7 +118,19 @@ folder: INBOX
 ## License
 
 Copyright © 2026 Andreas Ostermeyer.
-Licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
+This MCP server is licensed under the **[GNU Affero General Public License v3.0](LICENSE)** (AGPL-3.0).
+
+**Important clarification.** JMD itself is open and permissively licensed — this server's AGPL obligations apply only to this server's code, not to JMD:
+
+- **JMD specification** — [CC BY 4.0](https://github.com/ostermeyer/jmd-spec/blob/main/LICENSE) — free for any use including commercial, with attribution
+- **JMD reference implementations** — Apache 2.0 ([jmd-impl (Python)](https://github.com/ostermeyer/jmd-impl), [jmd-js (JavaScript)](https://github.com/ostermeyer/jmd-js))
+
+You can adopt, implement, or build on JMD freely in any language, under any license, in any environment. The AGPL-3.0 on this server governs only its specific integration code.
+
+**Commercial licensing** for this server (without AGPL-3.0 obligations) is available on request: andreas@ostermeyer.de
+
+---
 
 `src/mail_mcp/utf7.py` is cherry-picked from [imap_tools](https://github.com/ikvk/imap_tools)
 and remains under its original [MIT License](https://github.com/ikvk/imap_tools/blob/master/LICENSE).
