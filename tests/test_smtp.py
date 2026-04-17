@@ -16,8 +16,16 @@ from mail_mcp.config import MailConfig
 
 
 @pytest.fixture
-def cfg() -> dict[str, MailConfig]:
-    """Return a single-account cfgs dict with example.com placeholders."""
+def cfg(monkeypatch: pytest.MonkeyPatch) -> dict[str, MailConfig]:
+    """Return a single-account cfgs dict with example.com placeholders.
+
+    The password is resolved lazily from the keyring; we stub the
+    keyring lookup so tests do not touch the real OS keychain.
+    """
+    monkeypatch.setattr(
+        "mail_mcp.config.keyring.get_password",
+        lambda service, username: "test-password",
+    )
     return {
         "test": MailConfig(
             name="test",
@@ -26,7 +34,6 @@ def cfg() -> dict[str, MailConfig]:
             imap_host="imap.example.com",
             imap_port=993,
             username="user@example.com",
-            password="test-password",
         )
     }
 

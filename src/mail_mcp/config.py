@@ -23,7 +23,14 @@ _MAILBOX_RE = re.compile(r"^mailbox:\s*(.+)$", re.MULTILINE)
 
 @dataclass
 class MailConfig:
-    """Mail connection parameters for one account."""
+    """Mail connection parameters for one account.
+
+    The password is *not* stored in this object.  It is retrieved
+    lazily from the OS keyring the first time :attr:`password` is
+    accessed, so that operations which do not require an active
+    connection (e.g. schema reads, listing accounts) work without
+    having the password stored yet.
+    """
 
     name: str
     smtp_host: str
@@ -31,7 +38,27 @@ class MailConfig:
     imap_host: str
     imap_port: int
     username: str
-    password: str
+
+    @property
+    def password(self) -> str:
+        """Return the password from the keyring (lazy).
+
+        Raises:
+            ValueError: If no password is stored under the
+                (service, username) pair in the OS keyring.
+        """
+        pw = keyring.get_password(_KEYRING_SERVICE, self.username)
+        if pw is None:
+            raise ValueError(
+                f"No password in keyring for"
+                f" {_KEYRING_SERVICE}/{self.username}.\n"
+                "Store it via jmd-mcp-keyring:\n"
+                f"  write('# Credentials\\n"
+                f"service: {_KEYRING_SERVICE}\\n"
+                f"username: {self.username}\\n"
+                "password: <your-password>')"
+            )
+        return pw
 
 
 def resolve(document: str, cfgs: dict[str, MailConfig]) -> MailConfig:
@@ -145,7 +172,13 @@ def _int_field(
 
 
 def _parse_one(fields: dict[str, object]) -> MailConfig:
-    """Parse a single MailConfig entry from a dict of fields."""
+    """Parse a single MailConfig entry from a dict of fields.
+
+    The password is *not* looked up here — it is resolved lazily
+    via :attr:`MailConfig.password` when an actual IMAP/SMTP
+    connection is established.  This allows schema reads and
+    account listings to work before a password has been stored.
+    """
     smtp_host = _field(fields, "smtp-host", "smtp_host")
     imap_host = _field(fields, "imap-host", "imap_host")
     username = _field(fields, "username")
@@ -165,15 +198,6 @@ def _parse_one(fields: dict[str, object]) -> MailConfig:
         fields, "imap-port", "imap_port", default=993
     )
 
-    password = keyring.get_password(_KEYRING_SERVICE, username)
-    if password is None:
-        raise ValueError(
-            f"No password in keyring for {_KEYRING_SERVICE}/{username}.\n"
-            "Store it via jmd-mcp-keyring:\n"
-            f"  write('# Credentials\\nservice: {_KEYRING_SERVICE}"
-            f"\\nusername: {username}\\npassword: <your-password>')"
-        )
-
     return MailConfig(
         name=name,
         smtp_host=smtp_host,
@@ -181,5 +205,4 @@ def _parse_one(fields: dict[str, object]) -> MailConfig:
         imap_host=imap_host,
         imap_port=imap_port,
         username=username,
-        password=password,
     )

@@ -85,14 +85,30 @@ def test_load_missing_username(tmp_path: Path) -> None:
         config.load()
 
 
-def test_load_missing_password(tmp_path: Path) -> None:
-    """ValueError raised when keyring has no password for the account."""
+def test_load_without_password_succeeds(tmp_path: Path) -> None:
+    """Config loads even without a stored password (lazy lookup).
+
+    Password is resolved on access, not at load time, so that
+    schema reads and account listings work before a password
+    has been stored in the keyring.
+    """
     _write(tmp_path, _FULL_CONFIG)
     with patch(
         "mail_mcp.config.keyring.get_password", return_value=None
     ):
+        cfg = _first(config.load())
+    assert cfg.username == "u@example.com"
+
+
+def test_password_access_raises_when_missing(tmp_path: Path) -> None:
+    """Accessing .password raises when the keyring has no entry."""
+    _write(tmp_path, _FULL_CONFIG)
+    with patch(
+        "mail_mcp.config.keyring.get_password", return_value=None
+    ):
+        cfg = _first(config.load())
         with pytest.raises(ValueError, match="No password"):
-            config.load()
+            _ = cfg.password
 
 
 def test_load_success(tmp_path: Path) -> None:
@@ -102,10 +118,10 @@ def test_load_success(tmp_path: Path) -> None:
         "mail_mcp.config.keyring.get_password", return_value="secret"
     ):
         cfg = _first(config.load())
+        assert cfg.password == "secret"
     assert cfg.smtp_host == "smtp.example.com"
     assert cfg.imap_host == "imap.example.com"
     assert cfg.username == "u@example.com"
-    assert cfg.password == "secret"
     assert cfg.smtp_port == 587
     assert cfg.imap_port == 993
 
