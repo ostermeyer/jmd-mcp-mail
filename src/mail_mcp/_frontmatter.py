@@ -58,11 +58,21 @@ class DebugInfo:
 
 
 def parse_debug(fm: dict[str, Any]) -> DebugInfo:
-    """Parse the ``debug:`` frontmatter key."""
+    """Parse the ``debug:`` frontmatter key.
+
+    Special values:
+      * ``true`` (or the boolean ``True``) — alias for "all
+        known debug channels".  This matches the natural LLM
+        intuition of using ``debug: true`` as a boolean flag.
+    """
     raw = fm.get("debug")
     if raw is None:
         return DebugInfo(
             requested=frozenset(), unknown=[],
+        )
+    if raw is True or str(raw).strip().lower() == "true":
+        return DebugInfo(
+            requested=_KNOWN_DEBUG, unknown=[],
         )
     values = {
         v.strip() for v in str(raw).split(",") if v.strip()
@@ -93,6 +103,31 @@ def parse_frontmatter(document: str) -> dict[str, Any]:
     return parser.frontmatter
 
 
+class StrictRefusalError(ValueError):
+    """Raised when strict refusal rejects unknown frontmatter keys.
+
+    Inherits from :class:`ValueError` so existing ``except
+    ValueError`` paths continue to work.  The structured
+    attributes ``unknown`` and ``accepted`` let callers build
+    detailed error responses.
+    """
+
+    def __init__(
+        self, unknown: list[str], accepted: list[str],
+    ) -> None:
+        """Initialise the error with unknown and accepted keys."""
+        self.unknown = unknown
+        self.accepted = accepted
+        accepted_str = (
+            ", ".join(accepted) if accepted else "(none)"
+        )
+        super().__init__(
+            f"Unknown frontmatter key(s) {unknown!r} on a"
+            " destructive operation. Accepted keys:"
+            f" {accepted_str}."
+        )
+
+
 def check_frontmatter(
     fm: dict[str, Any],
     known: frozenset[str],
@@ -110,15 +145,13 @@ def check_frontmatter(
         List of unknown key names (may be empty).
 
     Raises:
-        ValueError: When *policy* is ``"strict"`` and unknown keys
-            are present.
+        StrictRefusalError: When *policy* is ``"strict"`` and
+            unknown keys are present.
     """
     unknown = [k for k in fm if k not in known]
     if unknown and policy == "strict":
-        raise ValueError(
-            f"Unknown frontmatter key(s) {unknown!r} on a"
-            " destructive operation. Accepted keys:"
-            f" {sorted(known) or '(none)'}."
+        raise StrictRefusalError(
+            unknown=unknown, accepted=sorted(known),
         )
     return unknown
 

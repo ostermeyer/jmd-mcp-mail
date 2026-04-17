@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 
 from mail_mcp import config, smtp
 from mail_mcp._frontmatter import (
+    StrictRefusalError,
     check_frontmatter,
     parse_debug,
     parse_frontmatter,
@@ -109,20 +110,38 @@ async def read(document: str) -> str:
 async def write(document: str) -> str:
     r"""Write to IMAP using a JMD document (https://github.com/ostermeyer/jmd-spec).
 
-    Folder operations:
-      # Folder  path: Archive              → create
-      rename-to: New\\n\\n# Folder path: Old → rename
+    Folder — create:
 
-    Message flag update:
-      # Message  id: 42  folder: INBOX
-      ## flags[]
-      - \\Seen
+        # Folder
+        path: Archive
 
-    Move/copy (frontmatter, two round-trips — use deliberately):
-      move-to: Archive\\n\\n# Message  id: 42  folder: INBOX
-      copy-to: Backup\\n\\n# Message  id: 42  folder: INBOX
+    Folder — rename (rename-to in frontmatter):
 
-    Multi-account: add 'mailbox: <name>' to route to a specific account.
+        rename-to: NewName
+
+        # Folder
+        path: OldName
+
+    Message — update flags:
+
+        # Message
+        id: 42
+        folder: INBOX
+        ## flags[]
+        - \Seen
+
+    Message — move/copy (frontmatter, two IMAP round-trips):
+
+        move-to: Archive
+
+        # Message
+        id: 42
+        folder: INBOX
+
+    Or copy-to instead of move-to for a non-destructive copy.
+
+    Multi-account: add 'mailbox: <name>' to route to a specific
+    account.
 
     Frontmatter policy: observable tolerance — unknown keys are
     echoed in the response as 'ignored-keys: ...'.
@@ -153,10 +172,21 @@ async def write(document: str) -> str:
 async def delete(document: str) -> str:
     r"""Delete an IMAP resource using a JMD delete document (https://github.com/ostermeyer/jmd-spec).
 
-    Folder:  confirm: drop-folder\\n\\n#- Folder  path: Archive
-    Message: #- Message  id: 42  folder: INBOX
+    Folder — requires confirm: drop-folder because the drop is
+    irreversible and removes all contained messages:
 
-    Bulk message delete (#- Message[]): delete many in one call.
+        confirm: drop-folder
+
+        #- Folder
+        path: Archive
+
+    Message — permanent (\Deleted + EXPUNGE):
+
+        #- Message
+        id: 42
+        folder: INBOX
+
+    Bulk message delete (#- Message[]): many in one call.
     List items may be scalar UIDs (defaults folder to INBOX) or
     dicts with id and optional folder.
 
@@ -169,10 +199,8 @@ async def delete(document: str) -> str:
           folder: Archive
 
     The deleted resource is returned as a full JMD data document.
-    Message deletion is permanent (\\Deleted + EXPUNGE).
-    Folder deletion requires 'confirm: drop-folder' frontmatter
-    because it removes all messages in the folder irreversibly.
-    Multi-account: add 'mailbox: <name>' to route to a specific account.
+    Multi-account: add 'mailbox: <name>' to route to a specific
+    account.
 
     Frontmatter policy: strict refusal — unknown keys cause a
     structured error (destructive operation, no silent drops).
@@ -191,6 +219,10 @@ async def delete(document: str) -> str:
                 (time.perf_counter() - t0) * 1000
             )
         return prepend_debug(result, dbg)
+    except StrictRefusalError as exc:
+        return _error(
+            400, "unknown_frontmatter_key", str(exc),
+        )
     except (FileNotFoundError, ValueError) as exc:
         return _error(500, "config_error", str(exc))
 
