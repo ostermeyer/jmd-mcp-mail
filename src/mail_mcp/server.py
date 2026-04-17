@@ -46,13 +46,22 @@ _INSTRUCTIONS = (
 mcp = FastMCP("jmd-mcp-mail", instructions=_INSTRUCTIONS)
 
 _cfgs: dict[str, config.MailConfig] | None = None
+_cfgs_mtime: float = 0.0
 
 
 def _get_cfgs() -> dict[str, config.MailConfig]:
-    """Return cached mail configs, loading on first call."""
-    global _cfgs
-    if _cfgs is None:
+    """Return mail configs, reloading if mail.jmd changed.
+
+    The config file is stat'd on every call (negligible cost).
+    When its mtime has advanced, the config is reloaded so that
+    the running server picks up edits without a restart.
+    """
+    global _cfgs, _cfgs_mtime
+    path = config.config_path()
+    mtime = path.stat().st_mtime if path.exists() else 0.0
+    if _cfgs is None or mtime > _cfgs_mtime:
         _cfgs = config.load()
+        _cfgs_mtime = mtime
     return _cfgs
 
 
