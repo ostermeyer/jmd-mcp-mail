@@ -40,7 +40,7 @@ _KNOWN_FM_SEND: frozenset[str] = frozenset({
 
 _INSTRUCTIONS = (
     'This is JMD, not IMAP or SMTP.'
-    ' Read "# MailBox[]" to discover accounts.'
+    ' Read "#! MailBox" to learn how.'
 )
 
 mcp = FastMCP("jmd-mcp-mail", instructions=_INSTRUCTIONS)
