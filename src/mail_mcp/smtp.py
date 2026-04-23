@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """SMTP sender for jmd-mcp-mail.
 
 Composes and sends email messages described by JMD Message documents.

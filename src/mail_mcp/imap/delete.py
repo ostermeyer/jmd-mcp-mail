@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """IMAP delete routing: folder and message deletion."""
 from __future__ import annotations
 

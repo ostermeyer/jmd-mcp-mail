@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for imap/_criteria.py — IMAP SEARCH string builder."""
 from __future__ import annotations
 

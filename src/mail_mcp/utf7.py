@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Modified UTF-7 codec for IMAP folder names (RFC 3501 §5.1.3).
 
 Cherry-picked from imap_tools (https://github.com/ikvk/imap_tools),

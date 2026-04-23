@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """IMAP write routing: folder CRUD, message flags, move, copy."""
 from __future__ import annotations
 

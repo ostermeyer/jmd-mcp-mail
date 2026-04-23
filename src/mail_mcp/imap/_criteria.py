@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Translate JMD QueryFields to an IMAP SEARCH criteria string."""
 from __future__ import annotations
 

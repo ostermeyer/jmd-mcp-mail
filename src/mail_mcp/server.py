@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """JMD MCP server for email — IMAP + SMTP.
 
 Four tools: read, write, delete (IMAP), send (SMTP).

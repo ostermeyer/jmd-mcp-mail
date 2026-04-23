@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the shared _frontmatter helpers."""
 from __future__ import annotations
 

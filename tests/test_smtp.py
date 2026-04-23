@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for mail_mcp.smtp.
 
 All SMTP connections are mocked — no real server is contacted.

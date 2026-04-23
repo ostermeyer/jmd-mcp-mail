@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Async IMAP4_SSL connection context manager."""
 from __future__ import annotations
 

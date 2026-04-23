@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Configuration for jmd-mcp-mail.
 
 Reads mail settings from ~/.config/jmd/mail.jmd.

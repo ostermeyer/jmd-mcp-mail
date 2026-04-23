@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """IMAP response parsers and domain dataclasses.
 
 Converts raw imaplib byte responses into typed dataclasses, and

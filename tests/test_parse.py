@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for imap/_parse.py — no IMAP connection needed."""
 from __future__ import annotations
 

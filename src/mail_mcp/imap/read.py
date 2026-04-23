@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """IMAP read and query routing for jmd-mcp-mail."""
 from __future__ import annotations
 

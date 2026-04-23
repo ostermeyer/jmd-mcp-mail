@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """JMD schema strings for all mail resource types."""
 from __future__ import annotations
 

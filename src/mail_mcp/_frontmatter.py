@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Frontmatter helpers: tolerance and debug mode.
 
 Provides shared helpers used by every tool:

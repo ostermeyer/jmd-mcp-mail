@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for mail_mcp.config.
 
 Uses a temporary directory for the config file and mocks the keyring.
