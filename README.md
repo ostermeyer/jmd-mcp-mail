@@ -13,6 +13,15 @@ An MCP server that lets an LLM agent (Claude Desktop, Claude Code, …) work wit
 - **JMD-native I/O.** Tool inputs and outputs are JMD documents (Markdown-shaped, LLM-friendly). Mail bodies round-trip Markdown ↔ HTML transparently.
 - **Transparent AI footer.** Every sent message carries a short disclosure that it was composed by an AI assistant.
 
+## Requirements
+
+- Python ≥ 3.10.
+- Runtime dependencies (pulled automatically by your installer):
+  - [`jmd-format`](https://pypi.org/project/jmd-format/) ≥ 0.5 — the JMD reference implementation.
+  - [`mcp[cli]`](https://pypi.org/project/mcp/) ≥ 1.0 — the Model Context Protocol SDK.
+  - [`markdown`](https://pypi.org/project/Markdown/) ≥ 3.5 and [`markdownify`](https://pypi.org/project/markdownify/) ≥ 0.11 — Markdown ↔ HTML round-trip for message bodies.
+- A working OS keystore (always present on macOS / Windows; on Linux see *Setting up credentials* below).
+
 ## Install
 
 With [uv](https://github.com/astral-sh/uv):
