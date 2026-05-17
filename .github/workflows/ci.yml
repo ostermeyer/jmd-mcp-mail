@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: Apache-2.0
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: ruff + mypy + pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      # `--no-sources` ignores the local `[tool.uv.sources]` block
+      # in pyproject.toml that points jmd-format at ../jmd-impl for
+      # dev convenience.  In CI we resolve from the production
+      # `dependencies` entry instead (git+https://.../jmd-impl).
+      - name: Sync dependencies (no local sources)
+        run: uv sync --no-sources --python ${{ matrix.python-version }}
+
+      - name: Ruff
+        run: uv run ruff check src/ tests/
+
+      # MYPYPATH is unset so mypy uses the installed jmd-format
+      # package, not the workspace-local `../jmd-impl` referenced
+      # in pyproject's `[tool.mypy] mypy_path`.
+      - name: Mypy --strict
+        env:
+          MYPYPATH: ""
+        run: uv run mypy --strict src/ tests/
+
+      - name: Pytest
+        run: uv run pytest

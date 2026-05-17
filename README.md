@@ -1,5 +1,8 @@
 # jmd-mcp-mail
 
+[![CI](https://github.com/ostermeyer/jmd-mcp-mail/actions/workflows/ci.yml/badge.svg)](https://github.com/ostermeyer/jmd-mcp-mail/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 An MCP server that lets an LLM agent (Claude Desktop, Claude Code, …) work with your email — IMAP read/write/delete and SMTP send — using [JMD](https://github.com/ostermeyer/jmd-impl) as the on-the-wire format.
 
 ## What's special
