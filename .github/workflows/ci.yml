@@ -11,6 +11,14 @@ jobs:
   test:
     name: ruff + mypy + pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+
+    # `UV_NO_SOURCES=1` makes every uv invocation in this job
+    # ignore the local `[tool.uv.sources]` block in pyproject.toml
+    # (which points jmd-format at the workspace-local
+    # `../jmd-impl` path).  Both `uv sync` and `uv run` need this.
+    env:
+      UV_NO_SOURCES: "1"
+
     strategy:
       fail-fast: false
       matrix:
@@ -29,12 +37,8 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      # `--no-sources` ignores the local `[tool.uv.sources]` block
-      # in pyproject.toml that points jmd-format at ../jmd-impl for
-      # dev convenience.  In CI we resolve from the production
-      # `dependencies` entry instead (git+https://.../jmd-impl).
-      - name: Sync dependencies (no local sources)
-        run: uv sync --no-sources --python ${{ matrix.python-version }}
+      - name: Sync dependencies
+        run: uv sync --python ${{ matrix.python-version }}
 
       - name: Ruff
         run: uv run ruff check src/ tests/
