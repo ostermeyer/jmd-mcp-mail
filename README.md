@@ -20,7 +20,7 @@ An MCP server that lets an LLM agent (Claude Desktop, Claude Code, …) work wit
   - [`jmd-format`](https://pypi.org/project/jmd-format/) ≥ 0.5 — the JMD reference implementation.
   - [`mcp[cli]`](https://pypi.org/project/mcp/) ≥ 1.0 — the Model Context Protocol SDK.
   - [`markdown`](https://pypi.org/project/Markdown/) ≥ 3.5 and [`markdownify`](https://pypi.org/project/markdownify/) ≥ 0.11 — Markdown ↔ HTML round-trip for message bodies.
-- A working OS keystore (always present on macOS / Windows; on Linux see *Setting up credentials* below).
+- **macOS.** Linux and Windows are stubbed pending the next release — see *Setting up credentials* below.
 
 ## Install
 
@@ -84,25 +84,15 @@ security add-generic-password -s "smtp.…:587" -a "you@…" -w
 
 The `-w` (no value) makes `security` prompt for the password tty-interactively.  Type the password, retype to confirm.
 
-### Linux
+### Linux and Windows
 
-Requires `libsecret-tools` (Debian/Ubuntu: `apt install libsecret-tools`; Fedora/Arch: `dnf/pacman install libsecret`) plus a running Secret Service provider (GNOME Keyring or KWallet-Bridge).
+**Not yet implemented.**  The server's keystore read path currently dispatches `NotImplementedError` on Linux and Windows; only macOS is wired through.  Both platforms are planned for the next release:
 
-```sh
-secret-tool store --label='jmd-mcp-mail (IMAP)' service "imap.…:993" username "you@…"
-secret-tool store --label='jmd-mcp-mail (SMTP)' service "smtp.…:587" username "you@…"
-```
+- **Linux** will use `secret-tool lookup` against `libsecret`'s Secret Service provider (GNOME Keyring / KWallet-Bridge).
+- **Windows** will use the Win32 Credential Manager API via a small inline PowerShell helper (since `cmdkey` itself can seed but not read).
 
-`secret-tool store` prompts for the password on stdin (echo off).
+If you'd like to use jmd-mcp-mail on either platform in the meantime, please [open an issue](https://github.com/ostermeyer/jmd-mcp-mail/issues) — concrete user demand sets the priority of the follow-up slice.
 
-### Windows
-
-```powershell
-cmdkey /generic:"imap.…:993" /user:"you@…" /pass:"<password>"
-cmdkey /generic:"smtp.…:587" /user:"you@…" /pass:"<password>"
-```
-
-(`cmdkey` does take the password on the command line; clear your shell history afterwards if that matters to you.)
 
 ### Don't know the endpoints?  Just ask the agent.
 
@@ -166,7 +156,7 @@ The server returns errors as JMD `# Error` documents with `status`, `code`, and 
 | Code | Status | Cause / fix |
 |---|---|---|
 | `credential_missing` | 401 | No keystore item for `(service, username)`.  The error message contains the exact seed command — the agent will offer it to you. |
-| `keystore_unavailable` | 500 | macOS: `/usr/bin/security` missing or returned an unexpected error.  Linux: `secret-tool` not installed, or no Secret Service provider running, or D-Bus session not unlocked.  Windows: feature not yet implemented in this server. |
+| `keystore_unavailable` | 500 | macOS: `/usr/bin/security` missing or returned an unexpected error.  Linux and Windows: keystore read path not yet implemented; tool calls raise `NotImplementedError` until the next release. |
 | `auth_failed` | 401 | Server rejected the credentials.  Gmail/Outlook usually means "App Password required" — re-seed with the App Password instead of your account password. |
 | `connection_error` | 500 | Network-level failure (DNS, timeout, TLS handshake).  Usually a typo in the endpoint or a flaky network. |
 | `bad_request` | 400 | Malformed endpoint (e.g. missing `:port`) or invalid JMD document.  The agent should fix this itself. |
@@ -177,7 +167,7 @@ The server returns errors as JMD `# Error` documents with `status`, `code`, and 
 This server's threat model puts a wall between the LLM and your secrets:
 
 1. **No keystore-MCP exists.**  There is no generic tool that exposes `keystore.read(…)` to the LLM.  A prompt-injected tool result therefore cannot exfiltrate credentials through this server.
-2. **Read happens in the server process only.**  When the server needs a password, it invokes `security -g` / `secret-tool lookup` / (TODO Windows) in its own subprocess, parses the platform-specific output, and uses it directly in the IMAP/SMTP handshake.  Passwords are never returned in any tool output and never logged.
+2. **Read happens in the server process only.**  When the server needs a password, it invokes the platform's keystore CLI (currently `security -g` on macOS; Linux and Windows in the next release) in its own subprocess, parses the output, and uses it directly in the IMAP/SMTP handshake.  Passwords are never returned in any tool output and never logged.
 3. **Seeding happens out-of-band.**  The user types the password into the keystore CLI's tty-interactive prompt in their own terminal.  It does not traverse a tool call.
 
 The remaining attack surface is the OS keystore itself (anyone with your unlocked user session can read it — on Linux/Windows there are no per-process ACLs, and macOS Keychain ACLs are not used by this server).  This matches the trust model of any other application reading credentials from the user's keystore.
