@@ -12,6 +12,7 @@ which derives it from the port (see ``_endpoint``).
 """
 from __future__ import annotations
 
+import re
 import smtplib
 from email import encoders as email_encoders
 from email.message import EmailMessage
@@ -153,6 +154,8 @@ def _deliver(
         smtplib.SMTPException: Any SMTP-level failure.
         OSError: Network-level failure (connect, DNS, timeout).
     """
+    raw_bytes = _escape_leading_dots(raw_bytes)
+
     if info.tls_mode == TlsMode.IMPLICIT:
         cm: smtplib.SMTP = smtplib.SMTP_SSL(
             info.host, info.port, timeout=30,
@@ -167,6 +170,25 @@ def _deliver(
         conn.ehlo()
         conn.login(info.username, info.password)
         conn.sendmail(info.username, recipients, raw_bytes)
+
+
+# Lines starting with `.` in QP-encoded content can be mangled by
+# MTAs with buggy SMTP dot-stuffing handling (observed 2026-05-17
+# against IONOS: `.com` arrives as `...com` after a soft-break
+# wrap landed before the dot).  RFC 2045 §6.7 permits encoding
+# `.` as `=2E` and recommends it precisely for this SMTP-
+# interaction case; Python's stdlib QP encoder does not do this
+# by default, so we post-process here.  The substitution only
+# touches lines that *begin* with a literal `.` — those occur in
+# QP-encoded text parts at soft-break continuations, never in
+# headers or base64 parts.
+_LEADING_DOT_RE = re.compile(rb"(?m)^\.")
+
+
+def _escape_leading_dots(raw_bytes: bytes) -> bytes:
+    """Replace leading `.` with `=2E` to dodge buggy MTA de-stuffing."""
+    return _LEADING_DOT_RE.sub(b"=2E", raw_bytes)
+
 
 
 def _build_multipart(

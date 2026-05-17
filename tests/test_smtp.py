@@ -210,3 +210,51 @@ def test_send_recipients_refused(info: ConnectionInfo) -> None:
         )
     assert "# Error" in result
     assert "400" in result
+
+
+# ---------------------------------------------------------------------------
+# Leading-dot escape (RFC 2045 §6.7 defensive against buggy MTA de-stuffing)
+# ---------------------------------------------------------------------------
+
+
+def test_escape_leading_dots_replaces_line_start_only() -> None:
+    """A `.` at line start becomes `=2E`; mid-line `.` stays literal."""
+    raw = (
+        b"Subject: probe\r\n"
+        b"\r\n"
+        b"<p>visit github.com today</p>\r\n"
+        b".com/orphan/leading/dot\r\n"
+        b"<p>normal line.</p>\r\n"
+        b".another/leading\r\n"
+    )
+    out = smtp._escape_leading_dots(raw)
+    assert b"<p>visit github.com today</p>" in out
+    assert b"<p>normal line.</p>" in out
+    assert b"=2Ecom/orphan/leading/dot" in out
+    assert b"=2Eanother/leading" in out
+    # No bare leading-`.` lines left.
+    for line in out.splitlines():
+        assert not line.startswith(b".") or line.startswith(b".."), \
+            f"line still starts with single dot: {line!r}"
+
+
+def test_escape_leading_dots_idempotent() -> None:
+    """Running the substitution twice yields the same result."""
+    raw = b"<p>x</p>\r\n.com\r\n"
+    once = smtp._escape_leading_dots(raw)
+    twice = smtp._escape_leading_dots(once)
+    assert once == twice
+
+
+def test_deliver_applies_leading_dot_escape(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """``_deliver`` passes leading-dot-escaped bytes to ``sendmail``."""
+    smtp._deliver(
+        info,
+        ["r@example.com"],
+        b"From: a@example.com\r\nSubject: x\r\n\r\n.com/leading\r\n",
+    )
+    _, _, sent_bytes = mock_smtp.sendmail.call_args[0]
+    assert b"=2Ecom/leading" in sent_bytes
+    assert b"\n.com/leading" not in sent_bytes

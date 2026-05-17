@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 — 2026-05-17
+
+### Fixed
+
+- HTML message bodies no longer triggered an MTA URL-mangling bug at IONOS (and possibly other MTAs with buggy SMTP dot-stuffing handling).  When Python's email module wrapped a long QP-encoded line such that the continuation began with `.` (e.g. the wrap landing right before `.com/` in a footer URL), some MTAs added two dots instead of removing one — producing `...com/` in the delivered message.  `smtp._deliver` now pre-escapes leading `.` characters to `=2E` (RFC 2045 §6.7's canonical QP form for `.`), defensively avoiding the trigger.  RFC-compliant in both directions; standards-conforming MUAs see the original `.` after QP-decode.
+
+### Docs
+
+- Linux and Windows credential-setup sections demoted to "Not yet implemented" with a stated plan for the next release (already in HEAD since v0.2 + a doc patch).
+
+
 ## 0.2 — 2026-05-17
 
 **Breaking change.** Anyone running 0.1 with `~/.config/jmd/mail.jmd` will need to seed two OS-keystore items per mail account and remove the config file.  See the README's *Setting up credentials* section.
