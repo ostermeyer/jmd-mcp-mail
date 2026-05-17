@@ -116,17 +116,17 @@ def test_connection_info_resolve_happy_path() -> None:
         _credentials, "_read_from_keystore", return_value="pw"
     ) as mock_read:
         info = ConnectionInfo.resolve(
-            "smtp.gmail.com:587", "andreas@gmail.com"
+            "smtp.gmail.com:587", "test@example.com"
         )
     assert info == ConnectionInfo(
         host="smtp.gmail.com",
         port=587,
         tls_mode=TlsMode.STARTTLS,
-        username="andreas@gmail.com",
+        username="test@example.com",
         password="pw",
     )
     mock_read.assert_called_once_with(
-        "smtp.gmail.com:587", "andreas@gmail.com"
+        "smtp.gmail.com:587", "test@example.com"
     )
 
 
@@ -137,7 +137,7 @@ def test_connection_info_resolve_propagates_missing_credential() -> None:
     ):
         with pytest.raises(_credentials.CredentialNotFoundError):
             ConnectionInfo.resolve(
-                "smtp.gmail.com:587", "andreas@gmail.com"
+                "smtp.gmail.com:587", "test@example.com"
             )
 
 
@@ -147,5 +147,5 @@ def test_connection_info_resolve_rejects_bad_endpoint() -> None:
         _credentials, "_read_from_keystore"
     ) as mock_read:
         with pytest.raises(ValueError, match="missing ':port'"):
-            ConnectionInfo.resolve("smtp.gmail.com", "andreas@gmail.com")
+            ConnectionInfo.resolve("smtp.gmail.com", "test@example.com")
     mock_read.assert_not_called()
