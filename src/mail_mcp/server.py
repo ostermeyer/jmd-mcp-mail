@@ -86,11 +86,29 @@ async def read(service: str, username: str, document: str) -> str:
 
     Supported labels: Folder, Folder[], Message.
 
-    Schema:    #! Folder / #! Message / #! EmailAddress
-    Read:      # Folder[] | # Folder (path: X) |
-               # Message (id: X, folder: Y)
-    Query:     #? Folder [parent: X]
-               #? Message [folder: X, from: ~X, subject: ~X]
+    Document forms — body-form only.  Fields go on lines *after*
+    the heading; the JMD parser does NOT read inline parens or
+    brackets in the heading itself (silent empty parse).
+
+        #! Folder | #! Message | #! EmailAddress    (schema)
+
+        # Folder[]                                  (list roots)
+
+        # Folder                                    (one folder)
+        path: INBOX
+
+        # Message                                   (one message)
+        id: 42
+        folder: INBOX
+
+        #? Folder                                   (filter)
+        parent: INBOX
+
+        #? Message                                  (filter)
+        folder: INBOX
+        from: ~alice
+        subject: ~invoice
+        seen: false
 
     Pagination frontmatter: page, page-size, count (before the
     #? heading).
