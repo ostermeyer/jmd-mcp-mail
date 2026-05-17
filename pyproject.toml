@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jmd-mcp-mail"
-version = "0.1"
+version = "0.2"
 description = "JMD-native MCP server for email — IMAP/SMTP access for LLM agents"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -62,9 +62,6 @@ select = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
-
-[project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

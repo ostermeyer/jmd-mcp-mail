@@ -335,19 +335,13 @@ dev = [
 
 [[package]]
 name = "jmd-mcp-mail"
-version = "0.1"
+version = "0.2"
 source = { editable = "." }
 dependencies = [
     { name = "jmd-format" },
     { name = "markdown" },
     { name = "markdownify" },
     { name = "mcp", extra = ["cli"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
 ]
 
 [package.dev-dependencies]
@@ -364,10 +358,7 @@ requires-dist = [
     { name = "markdown", specifier = ">=3.5" },
     { name = "markdownify", specifier = ">=0.11" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
 ]
-provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [
