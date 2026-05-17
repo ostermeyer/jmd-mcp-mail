@@ -6,7 +6,7 @@ import imaplib
 
 from jmd import JMDDeleteParser, JMDParser, jmd_mode, serialize
 
-from mail_mcp.config import MailConfig, resolve
+from mail_mcp._endpoint import ConnectionInfo
 from mail_mcp.imap._connection import encode_folder, imap_call, open_imap
 from mail_mcp.imap._parse import (
     folder_to_dict,
@@ -20,12 +20,12 @@ _LABEL_FOLDER = "Folder"
 _LABEL_MESSAGE = "Message"
 
 
-async def delete(document: str, cfgs: dict[str, MailConfig]) -> str:
+async def delete(document: str, info: ConnectionInfo) -> str:
     """Dispatch a JMD delete document to the appropriate IMAP handler.
 
     Args:
-        document: JMD delete document string (#-).
-        cfgs: All configured mail accounts.
+        document: JMD delete document string (``#-``).
+        info: Resolved connection parameters for this call.
 
     Returns:
         JMD response document (the deleted resource).
@@ -37,15 +37,13 @@ async def delete(document: str, cfgs: dict[str, MailConfig]) -> str:
             "delete requires a #- document",
         )
 
-    cfg = resolve(document, cfgs)
     label = _extract_label(document)
 
-    # Bulk-delete: #- Message[] with a list of {id, folder} items.
     parsed = JMDDeleteParser().parse(document)
     if parsed.is_bulk:
         match parsed.label.lower():
             case "message":
-                return await _bulk_delete_messages(parsed, cfg)
+                return await _bulk_delete_messages(parsed, info)
             case _:
                 return _error(
                     400, "unknown_label",
@@ -54,9 +52,9 @@ async def delete(document: str, cfgs: dict[str, MailConfig]) -> str:
 
     match label.lower():
         case "folder":
-            return await _delete_folder(document, cfg)
+            return await _delete_folder(document, info)
         case "message":
-            return await _delete_message(document, cfg)
+            return await _delete_message(document, info)
         case _:
             return _error(
                 400, "unknown_label",
@@ -69,14 +67,13 @@ async def delete(document: str, cfgs: dict[str, MailConfig]) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _delete_folder(document: str, cfg: MailConfig) -> str:
+async def _delete_folder(document: str, info: ConnectionInfo) -> str:
     """Delete a folder and return its final document.
 
-    Requires ``confirm: drop-folder`` in frontmatter because
-    folder deletion is irreversible and removes all messages
-    contained in the folder.
+    Requires ``confirm: drop-folder`` in frontmatter because folder
+    deletion is irreversible and removes all messages contained in
+    the folder.
     """
-    # Verify confirm gate.
     fm_parser = JMDParser()
     fm_parser.parse(document)
     if fm_parser.frontmatter.get("confirm") != "drop-folder":
@@ -94,8 +91,7 @@ async def _delete_folder(document: str, cfg: MailConfig) -> str:
 
     encoded = encode_folder(path)
     try:
-        async with open_imap(cfg) as conn:
-            # Read folder info before deletion.
+        async with open_imap(info) as conn:
             st_list, list_data = await imap_call(conn, "list", '""', encoded)
             rec = None
             if st_list == "OK":
@@ -103,7 +99,6 @@ async def _delete_folder(document: str, cfg: MailConfig) -> str:
                     if isinstance(item, bytes):
                         rec = parse_list_item(item)
                         if rec is not None:
-                            rec.mailbox = cfg.name
                             break
 
             status, _ = await imap_call(conn, "delete", encoded)
@@ -115,9 +110,7 @@ async def _delete_folder(document: str, cfg: MailConfig) -> str:
 
             if rec is not None:
                 return serialize(folder_to_dict(rec), label=_LABEL_FOLDER)
-            return serialize(
-                {"path": path, "mailbox": cfg.name}, label=_LABEL_FOLDER
-            )
+            return serialize({"path": path}, label=_LABEL_FOLDER)
     except imaplib.IMAP4.error as exc:
         return _error(500, "imap_error", str(exc))
     except OSError as exc:
@@ -130,9 +123,9 @@ async def _delete_folder(document: str, cfg: MailConfig) -> str:
 
 
 async def _bulk_delete_messages(
-    parsed: object, cfg: MailConfig,
+    parsed: object, info: ConnectionInfo,
 ) -> str:
-    """Delete multiple messages by a list of {id, folder} items.
+    """Delete multiple messages by a list of ``{id, folder}`` items.
 
     Expects ``#- Message[]`` with list items either as scalars
     (UIDs, defaults folder to INBOX) or dicts with ``id`` and
@@ -146,7 +139,6 @@ async def _bulk_delete_messages(
             "Bulk delete requires a non-empty list",
         )
 
-    # Group UIDs by folder so we can SELECT once per folder.
     by_folder: dict[str, list[str]] = {}
     for item in ids:
         if isinstance(item, dict):
@@ -165,12 +157,11 @@ async def _bulk_delete_messages(
 
     deleted: list[dict[str, object]] = []
     try:
-        async with open_imap(cfg) as conn:
+        async with open_imap(info) as conn:
             for folder, uids in by_folder.items():
                 encoded = encode_folder(folder)
                 await imap_call(conn, "select", encoded)
                 for uid in uids:
-                    # Fetch before delete for the response.
                     status, data = await imap_call(
                         conn, "uid", "FETCH", uid, "(BODY.PEEK[])"
                     )
@@ -180,13 +171,8 @@ async def _bulk_delete_messages(
                         ):
                             raw = item[1]
                             if isinstance(raw, bytes):
-                                rec = parse_message(
-                                    uid, raw, folder,
-                                )
-                                rec.mailbox = cfg.name
-                                deleted.append(
-                                    message_to_dict(rec)
-                                )
+                                rec = parse_message(uid, raw, folder)
+                                deleted.append(message_to_dict(rec))
                     await imap_call(
                         conn, "uid", "STORE",
                         uid, "+FLAGS", r"(\Deleted)",
@@ -199,7 +185,7 @@ async def _bulk_delete_messages(
         return _error(500, "connection_error", str(exc))
 
 
-async def _delete_message(document: str, cfg: MailConfig) -> str:
+async def _delete_message(document: str, info: ConnectionInfo) -> str:
     """Fetch a message, delete it, and return its full document."""
     parsed = JMDDeleteParser().parse(document)
     ids = parsed.identifiers
@@ -211,10 +197,9 @@ async def _delete_message(document: str, cfg: MailConfig) -> str:
 
     encoded = encode_folder(folder)
     try:
-        async with open_imap(cfg) as conn:
+        async with open_imap(info) as conn:
             await imap_call(conn, "select", encoded)
 
-            # Fetch full message before deletion.
             status, data = await imap_call(
                 conn, "uid", "FETCH", uid, "(BODY.PEEK[])"
             )
@@ -227,14 +212,12 @@ async def _delete_message(document: str, cfg: MailConfig) -> str:
                             f"Message {uid} not found in {folder}",
                         )
                     rec = parse_message(uid, raw, folder)
-                    rec.mailbox = cfg.name
                 case _:
                     return _error(
                         404, "not_found",
                         f"Message {uid} not found in {folder}",
                     )
 
-            # Delete.
             await imap_call(
                 conn, "uid", "STORE", uid, "+FLAGS", r"(\Deleted)"
             )

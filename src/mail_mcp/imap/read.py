@@ -9,7 +9,7 @@ from pathlib import Path
 from jmd import JMDParser, JMDQueryParser, jmd_mode, jmd_to_dict, serialize
 
 from mail_mcp import schemas
-from mail_mcp.config import MailConfig, resolve
+from mail_mcp._endpoint import ConnectionInfo
 from mail_mcp.imap._connection import encode_folder, imap_call, open_imap
 from mail_mcp.imap._criteria import build as build_criteria
 from mail_mcp.imap._parse import (
@@ -22,7 +22,6 @@ from mail_mcp.imap._parse import (
 )
 
 _DEFAULT_PAGE_SIZE = 25
-_LABEL_MAILBOX = "MailBox"
 _LABEL_FOLDER = "Folder"
 _LABEL_MESSAGE = "Message"
 _LABEL_EMAIL_ADDRESS = "EmailAddress"
@@ -49,7 +48,7 @@ def _error(status: int, code: str, message: str) -> str:
 def _parse_status_response(
     data: list[bytes | None],
 ) -> tuple[int | None, int | None]:
-    """Parse STATUS response data into (messages, unseen)."""
+    """Parse STATUS response data into ``(messages, unseen)``."""
     import re
     messages: int | None = None
     unseen: int | None = None
@@ -66,11 +65,11 @@ def _parse_status_response(
 
 
 async def _list_folders(
-    cfg: MailConfig,
+    info: ConnectionInfo,
     pattern: str = "*",
 ) -> list[FolderRecord]:
     """Fetch all folders matching a pattern."""
-    async with open_imap(cfg) as conn:
+    async with open_imap(info) as conn:
         status, data = await imap_call(conn, "list", '""', pattern)
         if status != "OK":
             return []
@@ -80,19 +79,17 @@ async def _list_folders(
                 continue
             rec = parse_list_item(item)
             if rec is not None:
-                rec.mailbox = cfg.name
                 records.append(rec)
         return records
 
 
 async def _folder_with_status(
-    cfg: MailConfig,
+    info: ConnectionInfo,
     path: str,
 ) -> FolderRecord | None:
     """Fetch a single folder with MESSAGES and UNSEEN counts."""
     encoded = encode_folder(path)
-    async with open_imap(cfg) as conn:
-        # List to get flags and delim.
+    async with open_imap(info) as conn:
         status, data = await imap_call(conn, "list", '""', encoded)
         if status != "OK" or not data:
             return None
@@ -103,8 +100,6 @@ async def _folder_with_status(
         )
         if rec is None:
             return None
-        rec.mailbox = cfg.name
-        # Fetch status counts.
         st, st_data = await imap_call(
             conn, "status", encoded, "(MESSAGES UNSEEN)"
         )
@@ -122,12 +117,12 @@ async def _folder_with_status(
 # ---------------------------------------------------------------------------
 
 
-async def read(document: str, cfgs: dict[str, MailConfig]) -> str:
+async def read(document: str, info: ConnectionInfo) -> str:
     """Dispatch a JMD read document to the appropriate IMAP handler.
 
     Args:
         document: JMD document string.
-        cfgs: All configured mail accounts.
+        info: Resolved connection parameters for this call.
 
     Returns:
         JMD response string.
@@ -138,8 +133,6 @@ async def read(document: str, cfgs: dict[str, MailConfig]) -> str:
     if mode == "schema":
         label = _extract_label(document)
         match label.lower():
-            case "mailbox":
-                return schemas.MAILBOX
             case "folder":
                 return schemas.FOLDER
             case "emailaddress":
@@ -151,70 +144,23 @@ async def read(document: str, cfgs: dict[str, MailConfig]) -> str:
     if mode == "data":
         label = _extract_label(document)
         match label.lower():
-            case "mailbox":
-                return _read_mailbox(document, cfgs)
-            case "mailbox[]":
-                return _read_all_mailboxes(cfgs)
             case "folder":
-                cfg = resolve(document, cfgs)
-                return await _read_folder(document, cfg)
+                return await _read_folder(document, info)
             case "folder[]":
-                cfg = resolve(document, cfgs)
-                return await _read_root_folders(cfg)
+                return await _read_root_folders(info)
             case _:
-                cfg = resolve(document, cfgs)
-                return await _read_message(document, cfg)
+                return await _read_message(document, info)
 
     # ---- Query ----
     if mode == "query":
         label = _extract_label(document)
         match label.lower():
-            case "mailbox":
-                return _read_all_mailboxes(cfgs)
             case "folder":
-                cfg = resolve(document, cfgs)
-                return await _query_folders(document, cfg)
+                return await _query_folders(document, info)
             case _:
-                cfg = resolve(document, cfgs)
-                return await _query_messages(document, cfg)
+                return await _query_messages(document, info)
 
     return _error(400, "invalid_mode", f"Unsupported mode: {mode!r}")
-
-
-# ---------------------------------------------------------------------------
-# MailBox
-# ---------------------------------------------------------------------------
-
-
-def _mailbox_to_dict(cfg: MailConfig) -> dict[str, object]:
-    """Serialize a MailConfig to a JMD-friendly dict."""
-    return {
-        "name": cfg.name,
-        "username": cfg.username,
-        "imap-host": cfg.imap_host,
-        "imap-port": cfg.imap_port,
-        "smtp-host": cfg.smtp_host,
-        "smtp-port": cfg.smtp_port,
-    }
-
-
-def _read_mailbox(document: str, cfgs: dict[str, MailConfig]) -> str:
-    """Return one MailBox by name, or the first configured account."""
-    fields = jmd_to_dict(document)
-    name = (
-        str(fields.get("name", "")).strip()
-        if isinstance(fields, dict) else ""
-    )
-    cfg = cfgs.get(name) or next(iter(cfgs.values()))
-    return serialize(_mailbox_to_dict(cfg), label=_LABEL_MAILBOX)
-
-
-def _read_all_mailboxes(cfgs: dict[str, MailConfig]) -> str:
-    """Return all configured MailBox accounts as a list."""
-    return serialize(
-        [_mailbox_to_dict(cfg) for cfg in cfgs.values()],
-        label=_LABEL_MAILBOX,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +168,9 @@ def _read_all_mailboxes(cfgs: dict[str, MailConfig]) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _read_root_folders(cfg: MailConfig) -> str:
-    """Return all root-level folders as a # Folder[] document."""
-    records = await _list_folders(cfg)
+async def _read_root_folders(info: ConnectionInfo) -> str:
+    """Return all root-level folders as a ``# Folder[]`` document."""
+    records = await _list_folders(info)
     roots = [r for r in records if r.parent is None]
     return serialize(
         [folder_to_dict(r) for r in roots],
@@ -232,7 +178,7 @@ async def _read_root_folders(cfg: MailConfig) -> str:
     )
 
 
-async def _read_folder(document: str, cfg: MailConfig) -> str:
+async def _read_folder(document: str, info: ConnectionInfo) -> str:
     """Return a single folder with status counts."""
     fields = jmd_to_dict(document)
     if not isinstance(fields, dict):
@@ -240,13 +186,13 @@ async def _read_folder(document: str, cfg: MailConfig) -> str:
     path = str(fields.get("path", "")).strip()
     if not path:
         return _error(400, "missing_fields", "'path' is required")
-    rec = await _folder_with_status(cfg, path)
+    rec = await _folder_with_status(info, path)
     if rec is None:
         return _error(404, "not_found", f"Folder {path!r} not found")
     return serialize(folder_to_dict(rec), label=_LABEL_FOLDER)
 
 
-async def _query_folders(document: str, cfg: MailConfig) -> str:
+async def _query_folders(document: str, info: ConnectionInfo) -> str:
     """Return filtered folder list with pagination frontmatter."""
     parser = JMDParser()
     parser.parse(document)
@@ -262,7 +208,7 @@ async def _query_folders(document: str, cfg: MailConfig) -> str:
         if f.key == "parent" and f.condition.values:
             parent_filter = str(f.condition.values[0])
 
-    records = await _list_folders(cfg)
+    records = await _list_folders(info)
 
     if parent_filter is not None:
         records = [r for r in records if r.parent == parent_filter]
@@ -292,7 +238,7 @@ async def _query_folders(document: str, cfg: MailConfig) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _read_message(document: str, cfg: MailConfig) -> str:
+async def _read_message(document: str, info: ConnectionInfo) -> str:
     """Fetch a single message by UID."""
     fields = jmd_to_dict(document)
     if not isinstance(fields, dict):
@@ -312,7 +258,7 @@ async def _read_message(document: str, cfg: MailConfig) -> str:
 
     encoded = encode_folder(folder)
     try:
-        async with open_imap(cfg) as conn:
+        async with open_imap(info) as conn:
             await imap_call(conn, "select", encoded, True)
             status, data = await imap_call(
                 conn, "uid", "FETCH", uid, "(BODY.PEEK[])"
@@ -326,7 +272,6 @@ async def _read_message(document: str, cfg: MailConfig) -> str:
                             f"Message {uid} not found in {folder}",
                         )
                     rec = parse_message(uid, raw, folder, download_dest)
-                    rec.mailbox = cfg.name
                     return serialize(
                         message_to_dict(rec), label=_LABEL_MESSAGE
                     )
@@ -341,7 +286,7 @@ async def _read_message(document: str, cfg: MailConfig) -> str:
         return _error(500, "connection_error", str(exc))
 
 
-async def _query_messages(document: str, cfg: MailConfig) -> str:
+async def _query_messages(document: str, info: ConnectionInfo) -> str:
     """Search and list message headers with pagination."""
     parser = JMDParser()
     parser.parse(document)
@@ -363,7 +308,7 @@ async def _query_messages(document: str, cfg: MailConfig) -> str:
     encoded = encode_folder(folder)
 
     try:
-        async with open_imap(cfg) as conn:
+        async with open_imap(info) as conn:
             await imap_call(conn, "select", encoded, True)
             status, data = await imap_call(conn, "uid", "SEARCH", criteria)
             if status != "OK":
@@ -413,7 +358,6 @@ async def _query_messages(document: str, cfg: MailConfig) -> str:
                 rec = parse_message(
                     uid, item[1], folder, headers_only=True
                 )
-                rec.mailbox = cfg.name
                 records.append(message_to_dict(rec))
 
             return frontmatter + "\n" + serialize(

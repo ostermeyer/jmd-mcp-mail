@@ -59,7 +59,6 @@ class MessageRecord:
     size: int
     body: str
     attachments: list[AttachmentRecord]
-    mailbox: str = ""
 
 
 @dataclasses.dataclass(slots=True)
@@ -73,7 +72,6 @@ class FolderRecord:
     flags: list[str]
     messages: int | None = None
     unseen: int | None = None
-    mailbox: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -460,8 +458,6 @@ def message_to_dict(rec: MessageRecord) -> dict[str, object]:
         "subject": rec.subject,
         "date": rec.date,
     }
-    if rec.mailbox:
-        d["mailbox"] = rec.mailbox
     if rec.size:
         d["size"] = rec.size
     if rec.body:
@@ -496,8 +492,6 @@ def folder_to_dict(rec: FolderRecord) -> dict[str, object]:
         "path": rec.path,
         "delim": rec.delim,
     }
-    if rec.mailbox:
-        d["mailbox"] = rec.mailbox
     if rec.parent is not None:
         d["parent"] = rec.parent
     if rec.flags:

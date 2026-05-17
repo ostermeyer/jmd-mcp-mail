@@ -6,10 +6,10 @@ Provides shared helpers used by every tool:
 * :func:`check_frontmatter` — tolerance policy validation.
 * :func:`prepend_ignored_keys` — observable-tolerance echo.
 * :func:`parse_debug` and :class:`DebugInfo` — frontmatter-
-  driven debug mode (``debug: timing, mailbox, ...``).
+  driven debug mode (``debug: timing``).
 
-The design mirrors jmd-mcp-sql so the SmartSuite/mail/keyring/
-oauth2 servers use a consistent model.
+The design mirrors jmd-mcp-sql so the SmartSuite/mail/oauth2
+servers use a consistent model.
 """
 from __future__ import annotations
 
@@ -19,9 +19,7 @@ from typing import Any
 from jmd import JMDParser
 
 # Known debug values accepted by jmd-mcp-mail.
-_KNOWN_DEBUG: frozenset[str] = frozenset({
-    "timing", "mailbox",
-})
+_KNOWN_DEBUG: frozenset[str] = frozenset({"timing"})
 
 
 @dataclass
@@ -31,7 +29,6 @@ class DebugInfo:
     requested: frozenset[str]
     unknown: list[str]
     timing_ms: float = 0.0
-    mailbox: str = ""
 
     @property
     def active(self) -> bool:
@@ -53,8 +50,6 @@ class DebugInfo:
             parts.append(
                 f"debug-timing: {self.timing_ms:.1f}ms"
             )
-        if self.wants("mailbox") and self.mailbox:
-            parts.append(f"debug-mailbox: {self.mailbox}")
         return "\n".join(parts)
 
 

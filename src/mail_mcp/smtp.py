@@ -3,9 +3,12 @@
 
 Composes and sends email messages described by JMD Message documents.
 Message bodies are treated as Markdown and sent as multipart/alternative
-(plain text + HTML). File attachments are supported via an attachments[]
-array field.
-Uses smtplib (stdlib) with STARTTLS.
+(plain text + HTML).  File attachments are supported via an
+``attachments[]`` array field.
+
+Transport: ``smtplib`` (stdlib).  The connection mode (implicit TLS
+vs STARTTLS) is taken from the caller-supplied :class:`ConnectionInfo`
+which derives it from the port (see ``_endpoint``).
 """
 from __future__ import annotations
 
@@ -18,10 +21,10 @@ from email.mime.text import MIMEText
 from email.utils import formatdate
 from pathlib import Path
 
-import markdown as md
+import markdown as md  # type: ignore[import-untyped]
 from jmd import jmd_mode, jmd_to_dict, serialize
 
-from .config import MailConfig, resolve
+from mail_mcp._endpoint import ConnectionInfo, TlsMode
 
 _LABEL = "Message"
 _REPO_URL = "https://github.com/ostermeyer/jmd-mcp-mail"
@@ -32,17 +35,20 @@ _FOOTER = (
 )
 
 
-def send(document: str, cfgs: dict[str, MailConfig]) -> str:
+def send(document: str, info: ConnectionInfo) -> str:
     """Send an email described by a JMD Message document.
 
     Args:
-        document: JMD data document with to, subject, body fields.
-        cfgs: All configured mail accounts.
+        document: JMD data document with ``to``, ``subject``, ``body``
+            fields and optional ``cc``, ``bcc``, ``attachments[]``.
+        info: Resolved connection parameters (host/port/TLS-mode/
+            username/password).  Built by the caller via
+            :meth:`ConnectionInfo.resolve`.
 
     Returns:
-        JMD confirmation document or # Error document.
+        JMD confirmation document on success, ``# Error`` document
+        otherwise.
     """
-    cfg = resolve(document, cfgs)
     mode = jmd_mode(document)
     if mode != "data":
         return _error(
@@ -87,13 +93,13 @@ def send(document: str, cfgs: dict[str, MailConfig]) -> str:
 
     if attach_paths:
         msg_obj = _build_multipart(
-            cfg.username, to_addrs, cc_addrs, subject,
+            info.username, to_addrs, cc_addrs, subject,
             body_with_footer, html_body, attach_paths, date,
         )
         raw_bytes = msg_obj.as_bytes()
     else:
         plain_msg = EmailMessage()
-        plain_msg["From"] = cfg.username
+        plain_msg["From"] = info.username
         plain_msg["To"] = ", ".join(to_addrs)
         plain_msg["Subject"] = subject
         plain_msg["Date"] = date
@@ -104,12 +110,7 @@ def send(document: str, cfgs: dict[str, MailConfig]) -> str:
         raw_bytes = plain_msg.as_bytes()
 
     try:
-        with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=30) as conn:
-            conn.ehlo()
-            conn.starttls()
-            conn.ehlo()
-            conn.login(cfg.username, cfg.password)
-            conn.sendmail(cfg.username, all_recipients, raw_bytes)
+        _deliver(info, all_recipients, raw_bytes)
     except smtplib.SMTPAuthenticationError as exc:
         err_msg = (
             exc.smtp_error.decode()
@@ -134,6 +135,38 @@ def send(document: str, cfgs: dict[str, MailConfig]) -> str:
         {"to": ", ".join(to_addrs), "subject": subject, "status": "sent"},
         label=_LABEL,
     )
+
+
+def _deliver(
+    info: ConnectionInfo,
+    recipients: list[str],
+    raw_bytes: bytes,
+) -> None:
+    """Open an SMTP connection per ``info.tls_mode`` and deliver.
+
+    Args:
+        info: Resolved connection parameters.
+        recipients: Envelope-to addresses (To + Cc + Bcc).
+        raw_bytes: Encoded message bytes.
+
+    Raises:
+        smtplib.SMTPException: Any SMTP-level failure.
+        OSError: Network-level failure (connect, DNS, timeout).
+    """
+    if info.tls_mode == TlsMode.IMPLICIT:
+        cm: smtplib.SMTP = smtplib.SMTP_SSL(
+            info.host, info.port, timeout=30,
+        )
+    else:
+        cm = smtplib.SMTP(info.host, info.port, timeout=30)
+
+    with cm as conn:
+        if info.tls_mode == TlsMode.STARTTLS:
+            conn.ehlo()
+            conn.starttls()
+        conn.ehlo()
+        conn.login(info.username, info.password)
+        conn.sendmail(info.username, recipients, raw_bytes)
 
 
 def _build_multipart(

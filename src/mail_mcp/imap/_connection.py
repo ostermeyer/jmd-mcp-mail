@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Async IMAP4_SSL connection context manager."""
+"""Async IMAP connection context manager."""
 from __future__ import annotations
 
 import asyncio
@@ -8,28 +8,37 @@ import imaplib
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from mail_mcp.config import MailConfig
+from mail_mcp._endpoint import ConnectionInfo, TlsMode
 from mail_mcp.utf7 import encode as utf7_encode
 
 
 @asynccontextmanager
 async def open_imap(
-    cfg: MailConfig,
-) -> AsyncGenerator[imaplib.IMAP4_SSL, None]:
-    """Open an authenticated IMAP4_SSL connection in a thread.
+    info: ConnectionInfo,
+) -> AsyncGenerator[imaplib.IMAP4, None]:
+    """Open an authenticated IMAP connection in a thread.
 
-    Yields an imaplib.IMAP4_SSL instance.  All blocking I/O runs via
-    asyncio.to_thread() so the event loop is never blocked.
+    Uses ``IMAP4_SSL`` for ``TlsMode.IMPLICIT`` (typically port 993)
+    and ``IMAP4`` + ``starttls()`` for ``TlsMode.STARTTLS``
+    (typically port 143).  All blocking I/O runs via
+    ``asyncio.to_thread()`` so the event loop is never blocked.
 
     Args:
-        cfg: Mail configuration with IMAP host, port, and credentials.
+        info: Resolved connection parameters from
+            :meth:`ConnectionInfo.resolve`.
 
     Yields:
-        Authenticated imaplib.IMAP4_SSL connection.
+        Authenticated ``imaplib.IMAP4`` instance (``IMAP4_SSL``
+        when implicit-TLS).
     """
-    def _connect() -> imaplib.IMAP4_SSL:
-        conn = imaplib.IMAP4_SSL(cfg.imap_host, cfg.imap_port)
-        conn.login(cfg.username, cfg.password)
+    def _connect() -> imaplib.IMAP4:
+        conn: imaplib.IMAP4
+        if info.tls_mode == TlsMode.IMPLICIT:
+            conn = imaplib.IMAP4_SSL(info.host, info.port)
+        else:
+            conn = imaplib.IMAP4(info.host, info.port)
+            conn.starttls()
+        conn.login(info.username, info.password)
         return conn
 
     conn = await asyncio.to_thread(_connect)
@@ -41,19 +50,19 @@ async def open_imap(
 
 
 async def imap_call(
-    conn: imaplib.IMAP4_SSL,
+    conn: imaplib.IMAP4,
     method: str,
     *args: object,
 ) -> tuple[str, list[bytes | None]]:
     """Invoke an imaplib method in a thread and return (status, data).
 
     Args:
-        conn: Open IMAP4_SSL connection.
+        conn: Open IMAP connection.
         method: Method name on conn, e.g. 'uid', 'select', 'list'.
         *args: Positional arguments forwarded to the method.
 
     Returns:
-        (status, data) tuple exactly as imaplib returns.
+        ``(status, data)`` tuple exactly as imaplib returns.
 
     Raises:
         imaplib.IMAP4.error: On IMAP-level errors.
@@ -66,17 +75,17 @@ async def imap_call(
 def encode_folder(path: str) -> str:
     """Encode a folder path to a quoted IMAP mailbox name.
 
-    Handles Modified UTF-7 encoding and double-quoting of names that
-    contain spaces or special characters.
+    Handles Modified UTF-7 encoding and double-quoting of names
+    that contain spaces or special characters.
 
     Args:
-        path: Unicode folder path (e.g. 'Entwürfe' or 'INBOX/Sent Items').
+        path: Unicode folder path (e.g. 'Entwürfe' or
+            'INBOX/Sent Items').
 
     Returns:
         Properly encoded IMAP mailbox string, quoted if necessary.
     """
     encoded = utf7_encode(path).decode("ascii")
-    # Quote if the name contains spaces or is empty.
     if " " in encoded or not encoded:
         return f'"{encoded}"'
     return encoded

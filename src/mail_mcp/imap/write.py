@@ -6,7 +6,7 @@ import imaplib
 
 from jmd import JMDParser, jmd_mode, jmd_to_dict, serialize
 
-from mail_mcp.config import MailConfig, resolve
+from mail_mcp._endpoint import ConnectionInfo
 from mail_mcp.imap._connection import encode_folder, imap_call, open_imap
 from mail_mcp.imap._parse import (
     folder_to_dict,
@@ -25,16 +25,18 @@ _LABEL_MESSAGE = "Message"
 # ---------------------------------------------------------------------------
 
 
-async def write(document: str, cfgs: dict[str, MailConfig]) -> str:
+async def write(document: str, info: ConnectionInfo) -> str:
     """Dispatch a JMD data document to the appropriate IMAP write handler.
 
     Routing:
-    - # Folder  → create or rename folder (rename-to frontmatter)
-    - # Message → update flags; or move/copy (move-to/copy-to frontmatter)
+
+    * ``# Folder`` → create or rename folder (``rename-to`` frontmatter)
+    * ``# Message`` → update flags; or move/copy
+      (``move-to``/``copy-to`` frontmatter)
 
     Args:
         document: JMD data document string.
-        cfgs: All configured mail accounts.
+        info: Resolved connection parameters for this call.
 
     Returns:
         JMD response document.
@@ -46,7 +48,6 @@ async def write(document: str, cfgs: dict[str, MailConfig]) -> str:
             "write requires a data document (# Folder or # Message)",
         )
 
-    cfg = resolve(document, cfgs)
     parser = JMDParser()
     parser.parse(document)
     fm = parser.frontmatter
@@ -54,9 +55,9 @@ async def write(document: str, cfgs: dict[str, MailConfig]) -> str:
 
     match label.lower():
         case "folder":
-            return await _write_folder(document, fm, cfg)
+            return await _write_folder(document, fm, info)
         case "message":
-            return await _write_message(document, fm, cfg)
+            return await _write_message(document, fm, info)
         case _:
             return _error(
                 400, "unknown_label",
@@ -72,7 +73,7 @@ async def write(document: str, cfgs: dict[str, MailConfig]) -> str:
 async def _write_folder(
     document: str,
     fm: dict[str, object],
-    cfg: MailConfig,
+    info: ConnectionInfo,
 ) -> str:
     """Create or rename a folder."""
     fields = jmd_to_dict(document)
@@ -87,7 +88,7 @@ async def _write_folder(
     encoded_src = encode_folder(path)
 
     try:
-        async with open_imap(cfg) as conn:
+        async with open_imap(info) as conn:
             if rename_to:
                 encoded_dst = encode_folder(rename_to)
                 status, _ = await imap_call(
@@ -108,7 +109,6 @@ async def _write_folder(
                     )
                 result_path = path
 
-            # Return the resulting folder record.
             st2, list_data = await imap_call(
                 conn, "list", '""', encode_folder(result_path)
             )
@@ -117,13 +117,11 @@ async def _write_folder(
                     if isinstance(item, bytes):
                         rec = parse_list_item(item)
                         if rec is not None:
-                            rec.mailbox = cfg.name
                             return serialize(
                                 folder_to_dict(rec), label=_LABEL_FOLDER
                             )
             return serialize(
-                {"path": result_path, "mailbox": cfg.name},
-                label=_LABEL_FOLDER,
+                {"path": result_path}, label=_LABEL_FOLDER,
             )
     except imaplib.IMAP4.error as exc:
         return _error(500, "imap_error", str(exc))
@@ -139,7 +137,7 @@ async def _write_folder(
 async def _write_message(
     document: str,
     fm: dict[str, object],
-    cfg: MailConfig,
+    info: ConnectionInfo,
 ) -> str:
     """Update message flags, or move/copy to another folder."""
     fields = jmd_to_dict(document)
@@ -156,10 +154,10 @@ async def _write_message(
     copy_to = str(fm.get("copy-to", "")).strip()
 
     if move_to:
-        return await _move_message(uid, folder, move_to, cfg)
+        return await _move_message(uid, folder, move_to, info)
     if copy_to:
-        return await _copy_message(uid, folder, copy_to, cfg)
-    return await _update_flags(document, uid, folder, fields, cfg)
+        return await _copy_message(uid, folder, copy_to, info)
+    return await _update_flags(document, uid, folder, fields, info)
 
 
 async def _update_flags(
@@ -167,10 +165,9 @@ async def _update_flags(
     uid: str,
     folder: str,
     fields: dict[str, object],
-    cfg: MailConfig,
+    info: ConnectionInfo,
 ) -> str:
-    """Set the flags on a message from the ## flags[] array in the document."""
-    # Re-parse to get the flags array.
+    """Replace the flags on a message from the ``## flags[]`` array."""
     from jmd import JMDParser as _JMDParser
     parsed = _JMDParser().parse(document)
     flags_val = (
@@ -182,9 +179,8 @@ async def _update_flags(
 
     encoded = encode_folder(folder)
     try:
-        async with open_imap(cfg) as conn:
+        async with open_imap(info) as conn:
             await imap_call(conn, "select", encoded)
-            # Replace all flags.
             status, _ = await imap_call(
                 conn, "uid", "STORE", uid, "FLAGS", f"({new_flags})"
             )
@@ -193,7 +189,6 @@ async def _update_flags(
                     404, "not_found",
                     f"Message {uid} not found in {folder}",
                 )
-            # Fetch updated message for response.
             st2, data = await imap_call(
                 conn, "uid", "FETCH", uid, "(BODY.PEEK[])"
             )
@@ -201,13 +196,11 @@ async def _update_flags(
                 raw = data[0][1]
                 if isinstance(raw, bytes):
                     rec = parse_message(uid, raw, folder)
-                    rec.mailbox = cfg.name
                     return serialize(
                         message_to_dict(rec), label=_LABEL_MESSAGE
                     )
             return serialize(
-                {"id": uid, "folder": folder, "mailbox": cfg.name},
-                label=_LABEL_MESSAGE,
+                {"id": uid, "folder": folder}, label=_LABEL_MESSAGE,
             )
     except imaplib.IMAP4.error as exc:
         return _error(500, "imap_error", str(exc))
@@ -219,19 +212,20 @@ async def _move_message(
     uid: str,
     src_folder: str,
     dst_folder: str,
-    cfg: MailConfig,
+    info: ConnectionInfo,
 ) -> str:
     r"""Move a message to another folder.
 
     NOTE: This operation requires two IMAP round-trips:
-    1. COPY + STORE \\Deleted + EXPUNGE in source folder
-    2. SEARCH by Message-ID in destination to find the new UID
+
+    1. COPY + STORE ``\\Deleted`` + EXPUNGE in source folder.
+    2. SEARCH by ``Message-ID`` in destination to find the new UID.
 
     Args:
         uid: Source UID.
         src_folder: Source folder path.
         dst_folder: Destination folder path.
-        cfg: Mail configuration.
+        info: Resolved connection parameters.
 
     Returns:
         JMD Message document at new location with new UID.
@@ -239,10 +233,9 @@ async def _move_message(
     encoded_src = encode_folder(src_folder)
     encoded_dst = encode_folder(dst_folder)
     try:
-        async with open_imap(cfg) as conn:
+        async with open_imap(info) as conn:
             await imap_call(conn, "select", encoded_src)
 
-            # Fetch source message to get Message-ID for later search.
             _hdr_fetch = "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])"
             st, data = await imap_call(
                 conn, "uid", "FETCH", uid, _hdr_fetch
@@ -255,7 +248,6 @@ async def _move_message(
                     msg = _email.message_from_bytes(raw_hdr)
                     message_id = (msg.get("Message-ID") or "").strip()
 
-            # Copy to destination.
             st2, _ = await imap_call(conn, "uid", "COPY", uid, encoded_dst)
             if st2 != "OK":
                 return _error(
@@ -263,13 +255,11 @@ async def _move_message(
                     f"Could not copy message {uid} to {dst_folder!r}",
                 )
 
-            # Mark source as deleted and expunge.
             await imap_call(
                 conn, "uid", "STORE", uid, "+FLAGS", r"(\Deleted)"
             )
             await imap_call(conn, "expunge")
 
-            # Round-trip 2: find new UID in destination.
             await imap_call(conn, "select", encoded_dst)
             new_uid = await _find_by_message_id(conn, message_id)
 
@@ -281,17 +271,12 @@ async def _move_message(
                     raw = data3[0][1]
                     if isinstance(raw, bytes):
                         rec = parse_message(new_uid, raw, dst_folder)
-                        rec.mailbox = cfg.name
                         return serialize(
                             message_to_dict(rec), label=_LABEL_MESSAGE
                         )
 
             return serialize(
-                {
-                    "id": new_uid or "unknown",
-                    "folder": dst_folder,
-                    "mailbox": cfg.name,
-                },
+                {"id": new_uid or "unknown", "folder": dst_folder},
                 label=_LABEL_MESSAGE,
             )
     except imaplib.IMAP4.error as exc:
@@ -304,18 +289,19 @@ async def _copy_message(
     uid: str,
     src_folder: str,
     dst_folder: str,
-    cfg: MailConfig,
+    info: ConnectionInfo,
 ) -> str:
     """Copy a message to another folder.
 
-    NOTE: Like move-to, this requires two IMAP round-trips to resolve
-    the new UID via SEARCH by Message-ID in the destination folder.
+    NOTE: Like ``move-to``, this requires two IMAP round-trips to
+    resolve the new UID via SEARCH by ``Message-ID`` in the
+    destination folder.
 
     Args:
         uid: Source UID.
         src_folder: Source folder path.
         dst_folder: Destination folder path.
-        cfg: Mail configuration.
+        info: Resolved connection parameters.
 
     Returns:
         JMD Message document at new location with new UID.
@@ -323,7 +309,7 @@ async def _copy_message(
     encoded_src = encode_folder(src_folder)
     encoded_dst = encode_folder(dst_folder)
     try:
-        async with open_imap(cfg) as conn:
+        async with open_imap(info) as conn:
             await imap_call(conn, "select", encoded_src)
 
             st, data = await imap_call(
@@ -356,17 +342,12 @@ async def _copy_message(
                     raw = data3[0][1]
                     if isinstance(raw, bytes):
                         rec = parse_message(new_uid, raw, dst_folder)
-                        rec.mailbox = cfg.name
                         return serialize(
                             message_to_dict(rec), label=_LABEL_MESSAGE
                         )
 
             return serialize(
-                {
-                    "id": new_uid or "unknown",
-                    "folder": dst_folder,
-                    "mailbox": cfg.name,
-                },
+                {"id": new_uid or "unknown", "folder": dst_folder},
                 label=_LABEL_MESSAGE,
             )
     except imaplib.IMAP4.error as exc:
@@ -376,14 +357,14 @@ async def _copy_message(
 
 
 async def _find_by_message_id(
-    conn: imaplib.IMAP4_SSL,
+    conn: imaplib.IMAP4,
     message_id: str | None,
 ) -> str | None:
-    """Search for a message by its Message-ID header in the selected folder.
+    """Search for a message by ``Message-ID`` in the selected folder.
 
     Args:
         conn: Open, selected IMAP connection.
-        message_id: RFC 2822 Message-ID value (with angle brackets).
+        message_id: RFC 2822 ``Message-ID`` value (with angle brackets).
 
     Returns:
         UID string, or None if not found.
