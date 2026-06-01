@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Cross-platform credential resolution. The keystore-read path now dispatches at runtime to the platform's native backend on all three desktop OSes:
+  - **Linux** — `secret-tool lookup service <s> username <u>` against any libsecret-compatible Secret Service backend (GNOME Keyring, KWallet via the bridge, …). Requires the `libsecret-tools` package (`apt install libsecret-tools` / `dnf install libsecret`).
+  - **Windows** — `advapi32!CredReadW` via `ctypes`. No PowerShell subprocess; no extra dependencies beyond stdlib `ctypes`. The Credential Manager `TargetName` is namespaced as `jmd-mcp-mail:<service>:<username>` so multiple accounts on the same host coexist (the Win32 store keys generic credentials by `TargetName` alone) and so jmd-mcp-mail's entries do not collide with any existing `cmdkey /generic:<host>` credentials.
+  - **macOS** — unchanged (`security find-generic-password -g`).
+- One executable still serves all three platforms — no per-OS wheel, no native build step. Dispatch happens at runtime via `sys.platform`.
+- Symmetric round-trip tests for Linux and Windows in `tests/test_credentials.py`, each skipping cleanly when the platform or backend isn't available (the Linux test additionally probes for a working Secret Service daemon before running).
+
+### Docs
+
+- README's *Setting up credentials* section now documents the seed commands for all three platforms. The "Linux and Windows are stubbed" notice is removed.
+- `keystore_unavailable` troubleshooting row updated to cover all three backends.
+
+
 ## 0.2.1 — 2026-05-17
 
 ### Fixed
