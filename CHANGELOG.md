@@ -25,6 +25,17 @@
 - `keystore_unavailable` troubleshooting row updated to cover all three backends.
 
 
+### Added (OAuth2 / XOAUTH2)
+
+- OAuth2 support for providers that disabled Basic Auth (Microsoft, Gmail, …). The OAuth2 lifecycle lives in the [jmd-mcp-oauth2](https://github.com/ostermeyer/jmd-mcp-oauth2) broker; this server receives a short-lived **sealed** access token per call and authenticates via **XOAUTH2** (IMAP `AUTHENTICATE XOAUTH2`, SMTP `AUTH XOAUTH2`). The plaintext token never crosses a tool boundary; no mailbox password is stored.
+- `src/mail_mcp/_sealing.py`: a one-time X25519 keypair (private key in the OS keyring), public-key exposure, and sealed-token decryption (libsodium sealed box via PyNaCl).
+- Account registry gains `auth: basic | oauth2` and, for oauth2, a `broker-client`. Basic accounts serialize unchanged.
+- `accounts` answers a new `# PublicKey` shape (this server's public key, handed to the broker as the seal recipient).
+- `read` / `write` / `delete` / `send` accept an `access-token-sealed:` frontmatter key; absent it, Basic Auth via the keystore as before. A missing credential for a registered oauth2 account returns a structured `oauth_token_required` hint.
+- New `pynacl` + `keyring` dependencies. New tests: `tests/test_sealing.py`, `tests/test_xoauth2.py`, `tests/test_oauth.py`.
+- Validated end-to-end: a broker-sealed token round-trips here and authenticates against real Outlook IMAP + SMTP.
+
+
 ## 0.2.1 — 2026-05-17
 
 ### Fixed

@@ -54,6 +54,10 @@ _KNOWN_FM_SEND: frozenset[str] = frozenset({
 _INSTRUCTIONS = (
     'This is JMD, not IMAP or SMTP.'
     ' Read "#! Folder" or "#! Message" to learn how.'
+    ' Accounts marked auth: oauth2 in the registry authenticate with a'
+    ' short-lived sealed access token from jmd-mcp-oauth2, passed as an'
+    ' access-token-sealed: frontmatter key (the read tool explains the'
+    ' steps); basic accounts use a keystore password as before.'
 )
 
 mcp = FastMCP("jmd-mcp-mail", instructions=_INSTRUCTIONS)
@@ -196,6 +200,39 @@ async def read(service: str, username: str, document: str) -> str:
         fastmail.com → imap.fastmail.com:993 + smtp.fastmail.com:587,
         gmx.{net,de} → imap.gmx.net:993 + mail.gmx.net:587,
         web.de → imap.web.de:993 + smtp.web.de:587.
+
+    OAuth2 accounts (Microsoft, Gmail, …) — no password, a sealed
+    token instead:
+        Providers that disabled Basic Auth are marked
+        ``auth: oauth2`` in the registry and name a ``broker-client``
+        (a jmd-mcp-oauth2 client).  For these, do NOT seed a keystore
+        password; hand this server a short-lived *sealed* access
+        token per call:
+
+          1. Get this server's public key — call ``accounts`` with
+             ``# PublicKey`` (returns ``key: <base64>``).
+          2. Ask the token broker (jmd-mcp-oauth2) to seal a token to
+             that key — its ``read`` with::
+
+                 # OAuthToken
+                 name: <broker-client>
+                 recipient-pubkey: <key from step 1>
+
+             One-time first: authorize the broker via its ``write``
+             ``# OAuthSession { name: <broker-client> }`` (a
+             device-code or browser login).
+          3. Pass the returned ``ciphertext`` to THIS call as a
+             frontmatter key::
+
+                 access-token-sealed: <ciphertext>
+
+                 # Folder[]
+
+             It is opened here with our private key and used via
+             XOAUTH2; the plaintext token never crosses a tool call.
+
+        Calling an oauth2 account without a sealed token returns
+        ``oauth_token_required``, naming the broker-client and steps.
     """
     info = _resolve_info(service, username, document)
     if isinstance(info, str):
@@ -369,6 +406,10 @@ def send(service: str, username: str, document: str) -> str:
     (service, username); seed it once via your platform's
     keystore CLI (macOS: ``security add-generic-password``).
 
+    OAuth2 accounts use a sealed token instead of a password: pass it
+    as an ``access-token-sealed:`` frontmatter key (see the ``read``
+    tool for how to obtain one from jmd-mcp-oauth2).
+
     Frontmatter policy: observable tolerance — unknown keys are
     echoed in the response as 'ignored-keys: ...'.
     Debug frontmatter: 'debug: timing' (composable).
@@ -447,6 +488,24 @@ def accounts(document: str) -> str:
     valid intermediate state (and the user will hit
     ``credential_missing`` on the first real call, which carries the
     seed command).
+
+    OAuth2 accounts:
+        Set ``auth: oauth2`` and a ``broker-client`` (the
+        jmd-mcp-oauth2 client name) on the account instead of seeding
+        a keystore password.  Read this server's public key with the
+        ``# PublicKey`` form below; the `read`/`send` tools explain
+        how the agent fetches a sealed token from the broker and
+        passes it as an ``access-token-sealed:`` frontmatter key.
+
+        # Account                                   (oauth2 upsert)
+        label: outlook
+        imap_service: outlook.office365.com:993
+        smtp_service: smtp-mail.outlook.com:587
+        username: you@outlook.com
+        auth: oauth2
+        broker-client: outlook
+
+        # PublicKey                                 (this server's key)
     """
     try:
         return accounts_module.handle(document)

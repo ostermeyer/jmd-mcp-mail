@@ -118,7 +118,7 @@ The LLM knows the canonical endpoints for mainstream providers (Gmail, Outlook/O
 | Provider | IMAP | SMTP | Notes |
 |---|---|---|---|
 | Gmail | `imap.gmail.com:993` | `smtp.gmail.com:587` | Requires an [App Password](https://support.google.com/accounts/answer/185833) (2FA must be enabled) |
-| Outlook / Office 365 | `outlook.office365.com:993` | `smtp.office365.com:587` | OAuth-only accounts work only with an App Password; XOAUTH2 not yet supported |
+| Outlook / Office 365 | `outlook.office365.com:993` | `smtp-mail.outlook.com:587` | Basic Auth disabled — use **OAuth2** (see *OAuth2 accounts* above) |
 | IONOS | `imap.ionos.de:993` | `smtp.ionos.de:587` | Plain account password |
 | Fastmail | `imap.fastmail.com:993` | `smtp.fastmail.com:587` | App-specific password required |
 | GMX | `imap.gmx.net:993` | `mail.gmx.net:587` | IMAP must be enabled in account settings |
@@ -143,6 +143,36 @@ You'll usually never edit the file by hand. The agent does it through the `accou
 - *"Show me my configured mail accounts."* → agent calls `accounts` with `# Account[]`.
 - *"Save my IONOS account andreas@ostermeyer.de as `ionos`."* → agent calls `accounts` with a `# Account { … }` upsert, and (if the keystore items don't yet exist) also offers you the two seed commands.
 - *"Drop the old work account."* → agent calls `accounts` with `#- Account { label: work }`. The keystore items themselves are not touched — drop those with your platform's CLI if you want them gone too.
+
+## OAuth2 accounts (Microsoft, Gmail, …)
+
+Providers that disabled Basic Auth require OAuth2. This server does **not** run the OAuth2 flow itself — the [jmd-mcp-oauth2](https://github.com/ostermeyer/jmd-mcp-oauth2) token broker does. Mail receives a short-lived **sealed** access token per call and authenticates via XOAUTH2; the plaintext token never crosses a tool boundary, and no mailbox password is stored.
+
+**One-time setup**
+
+1. Register the account as OAuth2 — `auth: oauth2` plus a `broker-client` (the jmd-mcp-oauth2 client name):
+
+   ```
+   # Account
+   label: outlook
+   imap_service: outlook.office365.com:993
+   smtp_service: smtp-mail.outlook.com:587
+   username: you@outlook.com
+   auth: oauth2
+   broker-client: outlook
+   ```
+
+2. Authorize the broker session once (device-code or browser login): in jmd-mcp-oauth2, `write` a `# OAuthSession { name: outlook }`.
+
+**Per call** — the agent does this automatically (the `read`/`send` tool descriptions spell it out):
+
+1. `accounts` → `# PublicKey` — this server's public key.
+2. jmd-mcp-oauth2 `read` → `# OAuthToken { name: outlook, recipient-pubkey: <key> }` → a sealed `ciphertext`.
+3. Any mail call with `access-token-sealed: <ciphertext>` in the document frontmatter.
+
+Call an OAuth2 account without a token and the server replies with `oauth_token_required`, naming the broker-client and the steps.
+
+**No keystore password** is needed for OAuth2 accounts. The only secrets are the broker's refresh token (held by jmd-mcp-oauth2) and this server's X25519 private key — generated once and kept in the OS keyring (32 bytes; well within every platform's credential-size limit).
 
 ## Tools
 
@@ -202,6 +232,8 @@ The server returns errors as JMD `# Error` documents with `status`, `code`, and 
 | Code | Status | Cause / fix |
 |---|---|---|
 | `credential_missing` | 401 | No keystore item for `(service, username)`.  The error message contains the exact seed command — the agent will offer it to you. |
+| `oauth_token_required` | 401 | The account is `auth: oauth2` but no sealed token was supplied. Fetch one from the named `broker-client` (jmd-mcp-oauth2) and retry with an `access-token-sealed:` frontmatter key. |
+| `bad_sealed_token` | 400 | The `access-token-sealed` ciphertext could not be opened with this server's private key (wrong recipient key or corruption). Re-fetch a token sealed to the current `# PublicKey`. |
 | `keystore_unavailable` | 500 | The platform's keystore backend could not be reached. macOS: `/usr/bin/security` missing or returned an unexpected error. Linux: `secret-tool` missing (install `libsecret-tools`) or no Secret Service daemon running. Windows: `advapi32!CredReadW` failed with an unexpected error code. |
 | `auth_failed` | 401 | Server rejected the credentials.  Gmail/Outlook usually means "App Password required" — re-seed with the App Password instead of your account password. |
 | `connection_error` | 500 | Network-level failure (DNS, timeout, TLS handshake).  Usually a typo in the endpoint or a flaky network. |
