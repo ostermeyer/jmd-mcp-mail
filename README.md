@@ -124,9 +124,29 @@ The LLM knows the canonical endpoints for mainstream providers (Gmail, Outlook/O
 | GMX | `imap.gmx.net:993` | `mail.gmx.net:587` | IMAP must be enabled in account settings |
 | web.de | `imap.web.de:993` | `smtp.web.de:587` | IMAP must be enabled in account settings |
 
+## Account registry (optional)
+
+If you don't want to type the full `(service, username)` pair for every call, you can register short labels for your accounts and refer to them by label later. The registry lives in a small JMD file on disk:
+
+| OS | Path |
+|---|---|
+| Windows | `%APPDATA%\jmd-mcp-mail\accounts.jmd` |
+| macOS | `~/Library/Application Support/jmd-mcp-mail/accounts.jmd` |
+| Linux | `$XDG_CONFIG_HOME/jmd-mcp-mail/accounts.jmd` (default `~/.config/jmd-mcp-mail/accounts.jmd`) |
+
+(Override the location with `JMD_MCP_MAIL_ACCOUNTS_PATH=…` if you want, e.g. to keep it in a synced folder.)
+
+**No passwords live here** — only the metadata (`label`, `imap_service`, `smtp_service`, `username`). The actual credentials stay in the OS keystore, looked up by `(service, username)` at tool-call time exactly as before. The registry is just a convenience layer.
+
+You'll usually never edit the file by hand. The agent does it through the `accounts` tool:
+
+- *"Show me my configured mail accounts."* → agent calls `accounts` with `# Account[]`.
+- *"Save my IONOS account andreas@ostermeyer.de as `ionos`."* → agent calls `accounts` with a `# Account { … }` upsert, and (if the keystore items don't yet exist) also offers you the two seed commands.
+- *"Drop the old work account."* → agent calls `accounts` with `#- Account { label: work }`. The keystore items themselves are not touched — drop those with your platform's CLI if you want them gone too.
+
 ## Tools
 
-All four tools take `(service, username, document)` and return a JMD document (data, query result, or `# Error`).
+All four mail tools take `(service, username, document)`; the `accounts` tool takes just `(document)`.  All return a JMD document (data, query result, or `# Error`).
 
 ### `read` — IMAP read and query
 
@@ -152,6 +172,17 @@ All four tools take `(service, username, document)` and return a JMD document (d
 ### `send` — SMTP send
 
 `service` = SMTP endpoint.  Body is a `# Message` with `to`, `subject`, `body` (Markdown).  Optional: `cc`, `bcc`, `## attachments[]`.
+
+### `accounts` — labelled-account registry
+
+Single tool that dispatches by JMD mode against the on-disk registry described in *Account registry* above:
+
+- `#! Account` — schema.
+- `# Account[]` — list all configured accounts (sorted by label).
+- `# Account { label, imap_service, smtp_service, username }` — upsert by label (insert or replace).
+- `#- Account { label }` — delete the account with `label`. Keystore items are *not* touched.
+
+The registry stores **no passwords** — only the metadata. An upsert without matching keystore items is a valid intermediate state; the next read/send call will then return `credential_missing` with the seed command, which the agent will surface to you.
 
 ## Examples
 

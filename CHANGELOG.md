@@ -11,6 +11,14 @@
 - One executable still serves all three platforms — no per-OS wheel, no native build step. Dispatch happens at runtime via `sys.platform`.
 - Symmetric round-trip tests for Linux and Windows in `tests/test_credentials.py`, each skipping cleanly when the platform or backend isn't available (the Linux test additionally probes for a working Secret Service daemon before running).
 
+### Added (Account registry)
+
+- New `accounts` MCP tool and `src/mail_mcp/accounts.py` module — a small JSON-shaped-via-JMD on-disk registry of labelled `(imap_service, smtp_service, username)` triples so the LLM can refer to a mail account by short labels (`ionos`, `gmail-work`) instead of typing the full pair on every call.
+- Stored at `%APPDATA%\jmd-mcp-mail\accounts.jmd` (Windows), `~/Library/Application Support/jmd-mcp-mail/accounts.jmd` (macOS), `$XDG_CONFIG_HOME/jmd-mcp-mail/accounts.jmd` (Linux). Overrideable via `JMD_MCP_MAIL_ACCOUNTS_PATH`.
+- **No passwords stored** — the registry holds metadata only. Threat model unchanged: a prompt-injected tool result can read labels and endpoints, never a password. The keystore remains the only place credentials live.
+- Tool surface (single dispatch by JMD mode): `#! Account` (schema), `# Account[]` (list), `# Account { … }` (upsert by label), `#- Account { label }` (delete). Atomic writes (tmp + `os.replace`). Endpoint validation reuses the production `parse_endpoint` so an account that wouldn't connect can't be saved.
+- 24 unit tests in `tests/test_accounts.py` (storage round-trip, label-sorted writes, upsert-replace semantics, validation rejects, atomic-write tmp-file cleanup, all four dispatcher modes, Unicode labels).
+
 ### Docs
 
 - README's *Setting up credentials* section now documents the seed commands for all three platforms. The "Linux and Windows are stubbed" notice is removed.

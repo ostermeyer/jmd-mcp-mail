@@ -15,6 +15,7 @@ import time
 
 from mcp.server.fastmcp import FastMCP
 
+from mail_mcp import accounts as accounts_module
 from mail_mcp import smtp
 from mail_mcp._credentials import (
     CredentialNotFoundError,
@@ -354,6 +355,64 @@ def send(service: str, username: str, document: str) -> str:
     except ValueError as exc:
         return smtp._error(400, "bad_request", str(exc))
 
+
+
+@mcp.tool()
+def accounts(document: str) -> str:
+    r"""Manage the local Account registry via a JMD document (https://github.com/ostermeyer/jmd-spec).
+
+    Args:
+        document: JMD document selecting the operation (see below).
+
+    The registry is a flat list of labelled ``(imap_service,
+    smtp_service, username)`` triples stored under
+    ``%APPDATA%\\jmd-mcp-mail\\accounts.jmd`` (Windows),
+    ``~/Library/Application Support/jmd-mcp-mail/accounts.jmd``
+    (macOS) or ``$XDG_CONFIG_HOME/jmd-mcp-mail/accounts.jmd``
+    (Linux).  **No passwords** are stored here — only the metadata
+    needed to construct the ``(service, username)`` keystore lookup
+    at tool-call time.
+
+    Supported document forms:
+
+        #! Account                                  (schema)
+
+        # Account[]                                 (list all)
+
+        # Account                                   (upsert by label)
+        label: ionos
+        imap_service: imap.ionos.de:993
+        smtp_service: smtp.ionos.de:587
+        username: andreas@ostermeyer.de
+
+        #- Account                                  (delete by label)
+        label: ionos
+
+    Typical workflow:
+
+      1. **List** with ``# Account[]`` to see what the user has
+         configured.  Pick one for read / send.
+      2. **Upsert** with ``# Account { ... }`` when the user adds a
+         new account.  *Also* offer the user the keystore seed
+         commands (see the `read` tool docstring) — the registry
+         carries no password, so without those two keystore items
+         the account cannot authenticate.
+      3. **Delete** with ``#- Account { label }`` when the user
+         retires an account.  This does NOT delete the keystore
+         items; the user can drop those separately with their
+         platform's keystore CLI.
+
+    The registry is a convenience layer for *labels and endpoints*;
+    the source of truth for "can this account authenticate?" is the
+    OS keystore.  An upsert without matching keystore items is a
+    valid intermediate state (and the user will hit
+    ``credential_missing`` on the first real call, which carries the
+    seed command).
+    """
+    try:
+        return accounts_module.handle(document)
+    except ValueError as exc:
+        return _error(400, "bad_request", str(exc))
 
 
 def main() -> None:

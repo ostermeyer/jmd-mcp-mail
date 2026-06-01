@@ -52,3 +52,13 @@ body: string optional
   content-id: string optional
   size: integer
   path: string optional"""
+
+
+ACCOUNT: str = """\
+see-also: Folder, Message, EmailAddress
+
+#! Account
+label: string
+imap_service: string
+smtp_service: string
+username: string email"""
