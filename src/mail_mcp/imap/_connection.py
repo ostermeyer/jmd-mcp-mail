@@ -8,7 +8,7 @@ import imaplib
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from mail_mcp._endpoint import ConnectionInfo, TlsMode
+from mail_mcp._endpoint import ConnectionInfo, TlsMode, xoauth2_string
 from mail_mcp.utf7 import encode as utf7_encode
 
 
@@ -38,7 +38,11 @@ async def open_imap(
         else:
             conn = imaplib.IMAP4(info.host, info.port)
             conn.starttls()
-        conn.login(info.username, info.password)
+        if info.access_token:
+            sasl = xoauth2_string(info.username, info.access_token)
+            conn.authenticate("XOAUTH2", lambda _: sasl.encode())
+        else:
+            conn.login(info.username, info.password)
         return conn
 
     conn = await asyncio.to_thread(_connect)

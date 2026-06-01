@@ -71,6 +71,7 @@ class ConnectionInfo:
     tls_mode: TlsMode
     username: str
     password: str
+    access_token: str = ""
 
     @classmethod
     def resolve(cls, service: str, username: str) -> ConnectionInfo:
@@ -98,6 +99,34 @@ class ConnectionInfo:
             tls_mode=endpoint.tls_mode,
             username=username,
             password=password,
+        )
+
+    @classmethod
+    def for_oauth(
+        cls, service: str, username: str, access_token: str,
+    ) -> ConnectionInfo:
+        """Build an OAuth2 connection (XOAUTH2, no keystore password).
+
+        Args:
+            service: Endpoint of the form ``host:port``.
+            username: SMTP/IMAP login.
+            access_token: A bearer access token (already unsealed).
+
+        Returns:
+            A :class:`ConnectionInfo` with ``access_token`` set; the
+            connection layer authenticates via XOAUTH2, not a password.
+
+        Raises:
+            ValueError: If ``service`` is not parseable.
+        """
+        endpoint = parse_endpoint(service)
+        return cls(
+            host=endpoint.host,
+            port=endpoint.port,
+            tls_mode=endpoint.tls_mode,
+            username=username,
+            password="",
+            access_token=access_token,
         )
 
 
@@ -176,3 +205,20 @@ def _split_host_port(service: str) -> tuple[str, int]:
         ) from exc
 
     return host, port
+
+
+def xoauth2_string(username: str, access_token: str) -> str:
+    """Build the SASL XOAUTH2 initial client-response string.
+
+    The format is ``user=<login>^Aauth=Bearer <token>^A^A`` where
+    ``^A`` is the Ctrl-A (``0x01``) separator. Base64-encode it for
+    SMTP ``AUTH XOAUTH2``; imaplib base64-encodes it for IMAP.
+
+    Args:
+        username: The account login (usually the email address).
+        access_token: A valid OAuth2 bearer access token.
+
+    Returns:
+        The XOAUTH2 SASL string.
+    """
+    return f"user={username}\x01auth=Bearer {access_token}\x01\x01"

@@ -12,6 +12,7 @@ which derives it from the port (see ``_endpoint``).
 """
 from __future__ import annotations
 
+import base64
 import re
 import smtplib
 from email import encoders as email_encoders
@@ -25,7 +26,7 @@ from pathlib import Path
 import markdown as md  # type: ignore[import-untyped]
 from jmd import jmd_mode, jmd_to_dict, serialize
 
-from mail_mcp._endpoint import ConnectionInfo, TlsMode
+from mail_mcp._endpoint import ConnectionInfo, TlsMode, xoauth2_string
 
 _LABEL = "Message"
 _REPO_URL = "https://github.com/ostermeyer/jmd-mcp-mail"
@@ -168,7 +169,16 @@ def _deliver(
             conn.ehlo()
             conn.starttls()
         conn.ehlo()
-        conn.login(info.username, info.password)
+        if info.access_token:
+            sasl = xoauth2_string(info.username, info.access_token)
+            code, msg = conn.docmd(
+                "AUTH",
+                "XOAUTH2 " + base64.b64encode(sasl.encode()).decode(),
+            )
+            if code != 235:
+                raise smtplib.SMTPAuthenticationError(code, msg)
+        else:
+            conn.login(info.username, info.password)
         conn.sendmail(info.username, recipients, raw_bytes)
 
 
