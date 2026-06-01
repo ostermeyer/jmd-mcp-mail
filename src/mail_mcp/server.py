@@ -15,8 +15,8 @@ import time
 
 from mcp.server.fastmcp import FastMCP
 
+from mail_mcp import _sealing, smtp
 from mail_mcp import accounts as accounts_module
-from mail_mcp import smtp
 from mail_mcp._credentials import (
     CredentialNotFoundError,
     KeystoreUnavailableError,
@@ -38,12 +38,18 @@ from mail_mcp.imap.read import _error
 # Known frontmatter keys per tool (observable tolerance / strict refusal).
 _KNOWN_FM_READ: frozenset[str] = frozenset({
     "page", "page-size", "count", "debug",
+    "access-token-sealed",
 })
 _KNOWN_FM_WRITE: frozenset[str] = frozenset({
     "rename-to", "move-to", "copy-to", "debug",
+    "access-token-sealed",
 })
-_KNOWN_FM_DELETE: frozenset[str] = frozenset({"confirm", "debug"})
-_KNOWN_FM_SEND: frozenset[str] = frozenset({"debug"})
+_KNOWN_FM_DELETE: frozenset[str] = frozenset({
+    "confirm", "debug", "access-token-sealed",
+})
+_KNOWN_FM_SEND: frozenset[str] = frozenset({
+    "debug", "access-token-sealed",
+})
 
 _INSTRUCTIONS = (
     'This is JMD, not IMAP or SMTP.'
@@ -53,21 +59,59 @@ _INSTRUCTIONS = (
 mcp = FastMCP("jmd-mcp-mail", instructions=_INSTRUCTIONS)
 
 
-def _resolve_info(service: str, username: str) -> ConnectionInfo | str:
-    """Resolve ``(service, username)`` to a ConnectionInfo, or an error.
+def _resolve_info(
+    service: str, username: str, document: str,
+) -> ConnectionInfo | str:
+    """Resolve a connection for one call, or return a JMD ``# Error``.
+
+    If *document*'s frontmatter carries ``access-token-sealed``, the
+    sealed OAuth2 access token is opened with this server's private
+    key and the connection authenticates via XOAUTH2 — no keystore
+    password is read.  Otherwise the password is resolved from the OS
+    keystore (Basic Auth) as before.  A missing Basic-Auth credential
+    for a registered ``oauth2`` account returns a structured
+    ``oauth_token_required`` hint instead of ``credential_missing``.
 
     Args:
         service: Endpoint string (``host:port``).
         username: Login identity.
+        document: The JMD document for this call.
 
     Returns:
-        Either a :class:`ConnectionInfo` on success, or a serialized
-        JMD ``# Error`` document on credential or endpoint failure.
-        Callers should ``isinstance``-check the result.
+        Either a :class:`ConnectionInfo`, or a serialized JMD
+        ``# Error`` document.  Callers should ``isinstance``-check.
     """
+    try:
+        fm = parse_frontmatter(document)
+    except ValueError as exc:
+        return _error(400, "bad_request", str(exc))
+    sealed = fm.get("access-token-sealed")
+    if sealed:
+        try:
+            token = _sealing.unseal(str(sealed))
+        except Exception as exc:  # noqa: BLE001 — opaque nacl/b64 errors
+            return _error(
+                400, "bad_sealed_token",
+                f"could not open the sealed access token: {exc}",
+            )
+        try:
+            return ConnectionInfo.for_oauth(service, username, token)
+        except ValueError as exc:
+            return _error(400, "bad_request", str(exc))
     try:
         return ConnectionInfo.resolve(service, username)
     except CredentialNotFoundError as exc:
+        acct = accounts_module.find_by_endpoint(service, username)
+        if acct is not None and acct.auth == "oauth2":
+            return _error(
+                401, "oauth_token_required",
+                f"Account {acct.label!r} uses OAuth2. Fetch a sealed "
+                f"access token from broker client "
+                f"{acct.broker_client!r}: read its '# OAuthToken' with "
+                "this server's recipient-pubkey (from `accounts` with "
+                "'# PublicKey'), then retry with an "
+                "'access-token-sealed:' frontmatter key.",
+            )
         return _error(401, "credential_missing", str(exc))
     except KeystoreUnavailableError as exc:
         return _error(500, "keystore_unavailable", str(exc))
@@ -153,7 +197,7 @@ async def read(service: str, username: str, document: str) -> str:
         gmx.{net,de} → imap.gmx.net:993 + mail.gmx.net:587,
         web.de → imap.web.de:993 + smtp.web.de:587.
     """
-    info = _resolve_info(service, username)
+    info = _resolve_info(service, username, document)
     if isinstance(info, str):
         return info
     try:
@@ -218,7 +262,7 @@ async def write(service: str, username: str, document: str) -> str:
     echoed in the response as 'ignored-keys: ...'.
     Debug frontmatter: 'debug: timing' (composable).
     """
-    info = _resolve_info(service, username)
+    info = _resolve_info(service, username, document)
     if isinstance(info, str):
         return info
     try:
@@ -276,7 +320,7 @@ async def delete(service: str, username: str, document: str) -> str:
     structured error (destructive operation, no silent drops).
     Debug frontmatter: 'debug: timing' (composable).
     """
-    info = _resolve_info(service, username)
+    info = _resolve_info(service, username, document)
     if isinstance(info, str):
         return info
     try:
@@ -336,14 +380,9 @@ def send(service: str, username: str, document: str) -> str:
         )
         dbg = parse_debug(fm)
         t0 = time.perf_counter()
-        try:
-            info = ConnectionInfo.resolve(service, username)
-        except CredentialNotFoundError as exc:
-            return smtp._error(401, "credential_missing", f"{exc}")
-        except KeystoreUnavailableError as exc:
-            return smtp._error(
-                500, "keystore_unavailable", str(exc),
-            )
+        info = _resolve_info(service, username, document)
+        if isinstance(info, str):
+            return info
         result = smtp.send(document, info)
         if dbg.active:
             dbg.timing_ms = (

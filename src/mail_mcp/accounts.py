@@ -64,21 +64,38 @@ class Account:
         smtp_service: SMTP endpoint as ``host:port``
             (e.g. ``smtp.ionos.de:587``).
         username: SMTP/IMAP login (usually the full email address).
+        auth: ``basic`` (password from the OS keystore, default) or
+            ``oauth2`` (a sealed access token fetched from the token
+            broker per call).
+        broker_client: For ``oauth2`` accounts, the jmd-mcp-oauth2
+            client name to fetch tokens from (e.g. ``outlook``).
     """
 
     label: str
     imap_service: str
     smtp_service: str
     username: str
+    auth: str = "basic"
+    broker_client: str = ""
 
     def as_jmd_dict(self) -> dict[str, str]:
-        """Map this record to the dict shape ``jmd.serialize`` consumes."""
-        return {
+        """Map this record to the dict shape ``jmd.serialize`` consumes.
+
+        ``auth`` and ``broker-client`` are emitted only when they
+        differ from the Basic-Auth default, so basic accounts keep
+        their original four-field shape.
+        """
+        d = {
             "label": self.label,
             "imap_service": self.imap_service,
             "smtp_service": self.smtp_service,
             "username": self.username,
         }
+        if self.auth != "basic":
+            d["auth"] = self.auth
+        if self.broker_client:
+            d["broker-client"] = self.broker_client
+        return d
 
 
 def _config_path() -> Path:
@@ -132,6 +149,15 @@ def _validate(account: Account) -> None:
     # Reuse the production endpoint parser — keeps validation rules
     # in one place; whatever the real connection layer accepts, the
     # registry accepts.
+    if account.auth not in ("basic", "oauth2"):
+        raise ValueError(
+            f"Account auth must be 'basic' or 'oauth2', "
+            f"got {account.auth!r}"
+        )
+    if account.auth == "oauth2" and not account.broker_client.strip():
+        raise ValueError(
+            "oauth2 accounts require a 'broker-client' field"
+        )
     parse_endpoint(account.imap_service)
     parse_endpoint(account.smtp_service)
 
@@ -178,6 +204,8 @@ def load() -> list[Account]:
                     imap_service=str(item["imap_service"]),
                     smtp_service=str(item["smtp_service"]),
                     username=str(item["username"]),
+                    auth=str(item.get("auth", "basic")),
+                    broker_client=str(item.get("broker-client", "")),
                 )
             )
         except KeyError as exc:
@@ -280,7 +308,7 @@ def handle(document: str) -> str:
         ``# Error`` document on failure.
     """
     # Local import to dodge a schemas → accounts circular import.
-    from mail_mcp.schemas import ACCOUNT
+    from mail_mcp.schemas import ACCOUNT, PUBLIC_KEY
 
     try:
         mode = jmd_mode(document)
@@ -291,8 +319,10 @@ def handle(document: str) -> str:
 
     try:
         if mode == "schema":
-            return ACCOUNT
+            return PUBLIC_KEY if _is_pubkey(document) else ACCOUNT
         if mode == "data":
+            if _is_pubkey(document):
+                return _handle_public_key()
             return _handle_data(document)
         if mode == "delete":
             return _handle_delete(document)
@@ -327,6 +357,8 @@ def _handle_data(document: str) -> str:
                 imap_service=str(data["imap_service"]),
                 smtp_service=str(data["smtp_service"]),
                 username=str(data["username"]),
+                auth=str(data.get("auth", "basic")),
+                broker_client=str(data.get("broker-client", "")),
             )
         except KeyError as exc:
             return _error(
@@ -372,3 +404,43 @@ def _error(status: int, code: str, message: str) -> str:
         {"status": status, "code": code, "message": message},
         label="Error",
     )
+
+
+def find_by_endpoint(service: str, username: str) -> Account | None:
+    """Return a registered account matching *service* + *username*.
+
+    Matches on either the IMAP or SMTP endpoint.  Used to give an
+    OAuth2-aware error when a Basic-Auth credential is missing.
+    Best-effort: swallows registry load errors.
+    """
+    try:
+        accounts = load()
+    except (ValueError, OSError):
+        return None
+    for a in accounts:
+        if a.username == username and service in (
+            a.imap_service, a.smtp_service,
+        ):
+            return a
+    return None
+
+
+def _root_label(document: str) -> str:
+    """Extract the root label from a JMD document heading."""
+    for line in document.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return stripped.lstrip("#!?- ").split("[", 1)[0].strip()
+    return ""
+
+
+def _is_pubkey(document: str) -> bool:
+    """Whether *document*'s root label is ``PublicKey``."""
+    return _root_label(document).lower() == "publickey"
+
+
+def _handle_public_key() -> str:
+    """Return this server's X25519 public key for the token broker."""
+    from mail_mcp import _sealing
+
+    return serialize({"key": _sealing.public_key()}, label="PublicKey")

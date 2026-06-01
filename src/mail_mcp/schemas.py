@@ -61,4 +61,10 @@ see-also: Folder, Message, EmailAddress
 label: string
 imap_service: string
 smtp_service: string
-username: string email"""
+username: string email
+auth: string optional
+broker-client: string optional"""
+
+PUBLIC_KEY: str = """\
+#! PublicKey
+key: string readonly"""
