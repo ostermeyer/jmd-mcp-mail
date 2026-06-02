@@ -57,7 +57,7 @@ async def imap_call(
     conn: imaplib.IMAP4,
     method: str,
     *args: object,
-) -> tuple[str, list[bytes | None]]:
+) -> tuple[str, list[bytes | tuple[bytes, bytes] | None]]:
     """Invoke an imaplib method in a thread and return (status, data).
 
     Args:

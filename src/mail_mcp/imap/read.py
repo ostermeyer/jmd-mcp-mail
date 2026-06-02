@@ -25,7 +25,6 @@ from mail_mcp.imap._parse import (
 _DEFAULT_PAGE_SIZE = 25
 _LABEL_FOLDER = "Folder"
 _LABEL_MESSAGE = "Message"
-_LABEL_EMAIL_ADDRESS = "EmailAddress"
 
 
 # ---------------------------------------------------------------------------
