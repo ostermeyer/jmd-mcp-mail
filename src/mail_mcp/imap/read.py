@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import imaplib
 import math
+from collections.abc import Sequence
 from pathlib import Path
 
 from jmd import JMDParser, JMDQueryParser, jmd_mode, jmd_to_dict, serialize
@@ -286,6 +287,22 @@ async def _read_message(document: str, info: ConnectionInfo) -> str:
         return _error(500, "connection_error", str(exc))
 
 
+def _uid_at(fetch_data: Sequence[object], i: int) -> str:
+    """Return the IMAP UID for the FETCH tuple at index *i*.
+
+    The UID can appear in the tuple's prefix (most servers) or, for
+    Exchange/Outlook which emit it *after* the body literal, in the
+    element trailing the tuple. Search both.
+    """
+    item = fetch_data[i]
+    prefix = b""
+    if isinstance(item, tuple) and item and isinstance(item[0], bytes):
+        prefix = item[0]
+    nxt = fetch_data[i + 1] if i + 1 < len(fetch_data) else None
+    trailer = nxt if isinstance(nxt, bytes) else b""
+    return extract_uid(prefix + b" " + trailer)
+
+
 async def _query_messages(document: str, info: ConnectionInfo) -> str:
     """Search and list message headers with pagination."""
     parser = JMDParser()
@@ -349,12 +366,12 @@ async def _query_messages(document: str, info: ConnectionInfo) -> str:
                 return _error(500, "imap_error", "FETCH failed")
 
             records: list[dict[str, object]] = []
-            for item in fetch_data:
+            for i, item in enumerate(fetch_data):
                 if not isinstance(item, tuple) or len(item) < 2:
                     continue
-                uid = extract_uid(item[0])
                 if not isinstance(item[1], bytes):
                     continue
+                uid = _uid_at(fetch_data, i)
                 rec = parse_message(
                     uid, item[1], folder, headers_only=True
                 )

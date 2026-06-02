@@ -36,6 +36,11 @@
 - Validated end-to-end: a broker-sealed token round-trips here and authenticates against real Outlook IMAP + SMTP.
 
 
+### Fixed
+
+- IMAP message listing on Exchange/Outlook rendered every message `id` as `?` — those servers emit the `UID` *after* the body literal (in the element trailing the FETCH tuple) rather than in the prefix, so the UID was never read. It is now read from either position, so listed messages carry their real UID and can actually be opened (`# Message { id, folder }`). Surfaced by the live OAuth2 Outlook test; covered by `tests/test_read.py`.
+
+
 ## 0.2.1 — 2026-05-17
 
 ### Fixed
