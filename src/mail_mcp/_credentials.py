@@ -299,6 +299,11 @@ def _read_windows(service: str, username: str) -> str | None:
             indicates the credential was seeded with a different
             namespacing convention and the caller should re-seed).
     """
+    if sys.platform != "win32":  # pragma: no cover - win32 only
+        raise KeystoreUnavailableError(
+            "Windows Credential Manager is only available on win32."
+        )
+
     import ctypes
     from ctypes import wintypes
 

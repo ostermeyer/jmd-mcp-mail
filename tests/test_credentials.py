@@ -252,6 +252,9 @@ def _win32_cred_write(target: str, username: str, password: str) -> None:
     use any Unicode password without worrying about cmd's
     quoting and code-page handling.
     """
+    if sys.platform != "win32":  # pragma: no cover - win32 only
+        raise RuntimeError("Windows-only test helper")
+
     import ctypes
     from ctypes import wintypes
 
@@ -307,6 +310,9 @@ def _win32_cred_write(target: str, username: str, password: str) -> None:
 
 def _win32_cred_delete(target: str) -> None:
     """Test helper: delete a Generic credential via ``CredDeleteW``."""
+    if sys.platform != "win32":  # pragma: no cover - win32 only
+        raise RuntimeError("Windows-only test helper")
+
     import ctypes
     from ctypes import wintypes
 
