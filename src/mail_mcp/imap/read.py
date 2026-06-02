@@ -365,17 +365,24 @@ async def _query_messages(document: str, info: ConnectionInfo) -> str:
             if st2 != "OK":
                 return _error(500, "imap_error", "FETCH failed")
 
-            records: list[dict[str, object]] = []
+            by_uid: dict[str, dict[str, object]] = {}
             for i, item in enumerate(fetch_data):
                 if not isinstance(item, tuple) or len(item) < 2:
                     continue
                 if not isinstance(item[1], bytes):
                     continue
                 uid = _uid_at(fetch_data, i)
-                rec = parse_message(
-                    uid, item[1], folder, headers_only=True
+                by_uid[uid] = message_to_dict(
+                    parse_message(uid, item[1], folder, headers_only=True)
                 )
-                records.append(message_to_dict(rec))
+            # Servers return FETCH results in sequence order regardless of
+            # the requested UID order, so re-emit in page_uids order
+            # (newest-first) for a stable, intuitive listing.
+            records = [
+                by_uid[u.decode()]
+                for u in page_uids
+                if u.decode() in by_uid
+            ]
 
             return frontmatter + "\n" + serialize(
                 records, label=_LABEL_MESSAGE

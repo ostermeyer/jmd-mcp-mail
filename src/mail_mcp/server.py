@@ -159,8 +159,10 @@ async def read(service: str, username: str, document: str) -> str:
         subject: ~invoice
         seen: false
 
-    Pagination frontmatter: page, page-size, count (before the
-    #? heading).
+    Pagination frontmatter (before the #? heading): page, page-size.
+    Results are newest-first. `count` switches to COUNT-ONLY mode — the
+    response is just `total: N` with an empty list (no message items);
+    omit `count` to receive the items.
 
     Frontmatter policy: observable tolerance — unknown keys are
     echoed in the response as 'ignored-keys: ...'.
