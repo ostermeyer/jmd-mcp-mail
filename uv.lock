@@ -381,7 +381,7 @@ wheels = [
 
 [[package]]
 name = "jmd-format"
-version = "0.6.0"
+version = "0.6.1"
 source = { editable = "../jmd-impl" }
 
 [package.metadata]
@@ -390,6 +390,7 @@ provides-extras = ["xml"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "hypothesis", specifier = ">=6.0" },
     { name = "lxml-stubs", specifier = ">=0.5.1" },
     { name = "mypy", specifier = ">=1.20.1" },
     { name = "pytest", specifier = ">=8.0" },
