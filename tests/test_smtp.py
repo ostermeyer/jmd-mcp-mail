@@ -215,51 +215,39 @@ def test_send_recipients_refused(info: ConnectionInfo) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Leading-dot escape (RFC 2045 §6.7 defensive against buggy MTA de-stuffing)
+# Leading dots are left to smtplib's own RFC-821 dot-stuffing
 # ---------------------------------------------------------------------------
 
 
-def test_escape_leading_dots_replaces_line_start_only() -> None:
-    """A `.` at line start becomes `=2E`; mid-line `.` stays literal."""
-    raw = (
-        b"Subject: probe\r\n"
-        b"\r\n"
-        b"<p>visit github.com today</p>\r\n"
-        b".com/orphan/leading/dot\r\n"
-        b"<p>normal line.</p>\r\n"
-        b".another/leading\r\n"
-    )
-    out = smtp._escape_leading_dots(raw)
-    assert b"<p>visit github.com today</p>" in out
-    assert b"<p>normal line.</p>" in out
-    assert b"=2Ecom/orphan/leading/dot" in out
-    assert b"=2Eanother/leading" in out
-    # No bare leading-`.` lines left.
-    for line in out.splitlines():
-        assert not line.startswith(b".") or line.startswith(b".."), \
-            f"line still starts with single dot: {line!r}"
-
-
-def test_escape_leading_dots_idempotent() -> None:
-    """Running the substitution twice yields the same result."""
-    raw = b"<p>x</p>\r\n.com\r\n"
-    once = smtp._escape_leading_dots(raw)
-    twice = smtp._escape_leading_dots(once)
-    assert once == twice
-
-
-def test_deliver_applies_leading_dot_escape(
+def test_send_does_not_pre_escape_leading_dots(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
-    """``_deliver`` passes leading-dot-escaped bytes to ``sendmail``."""
-    smtp._deliver(
-        info,
-        ["r@example.com"],
-        b"From: a@example.com\r\nSubject: x\r\n\r\n.com/leading\r\n",
+    """Leading dots stay literal; smtplib does the SMTP dot-stuffing.
+
+    We used to rewrite a line-leading `.` to `=2E` as a defense against
+    a corrupted soft-break before the dot (observed against IONOS). That
+    was a symptom of bare-LF soft-breaks; the CRLF policy fix removes the
+    root cause, and smtplib.SMTP.data() already dot-stuffs per RFC 821.
+    So no `=2E` pre-escaping should appear in the bytes we hand to
+    sendmail — the literal dot is preserved and stuffed by smtplib.
+    """
+    doc = (
+        "# Message\n"
+        "to: r@example.com\n"
+        "subject: Hi\n"
+        "body:\n"
+        "> normale Zeile\n"
+        "> .com-fuehrender-punkt"
     )
-    _, _, sent_bytes = mock_smtp.sendmail.call_args[0]
-    assert b"=2Ecom/leading" in sent_bytes
-    assert b"\n.com/leading" not in sent_bytes
+    smtp.send(doc, info)
+    _, _, raw = mock_smtp.sendmail.call_args[0]
+    assert b"=2E" not in raw
+    # The leading-dot text is present (decoded), not rewritten.
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    plain = next(
+        p for p in msg.walk() if p.get_content_type() == "text/plain"
+    ).get_content()
+    assert ".com-fuehrender-punkt" in plain
 
 
 # ---------------------------------------------------------------------------
