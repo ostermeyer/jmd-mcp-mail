@@ -16,6 +16,7 @@ import base64
 import re
 import smtplib
 from email import encoders as email_encoders
+from email import policy as email_policy
 from email.message import EmailMessage
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -107,7 +108,11 @@ def send(document: str, info: ConnectionInfo) -> str:
             info.username, to_addrs, cc_addrs, subject,
             body_with_footer, html_body, attach_paths, date,
         )
-        raw_bytes = msg_obj.as_bytes()
+        # policy.SMTP serializes with CRLF line endings. sendmail()
+        # sends bytes as-is (no eol fixup), and a bare-LF message gets
+        # eol-normalized by the receiving MTA — which corrupts the QP
+        # soft-breaks (=\n) at the 76-char boundary. CRLF avoids that.
+        raw_bytes = msg_obj.as_bytes(policy=email_policy.SMTP)
     else:
         plain_msg = EmailMessage()
         plain_msg["From"] = info.username
@@ -124,7 +129,9 @@ def send(document: str, info: ConnectionInfo) -> str:
         plain_msg.add_alternative(
             html_body, subtype="html", cte="quoted-printable",
         )
-        raw_bytes = plain_msg.as_bytes()
+        # policy.SMTP → CRLF line endings (see note above): without it
+        # the bare-LF QP soft-breaks get corrupted in transit.
+        raw_bytes = plain_msg.as_bytes(policy=email_policy.SMTP)
 
     try:
         _deliver(info, all_recipients, raw_bytes)

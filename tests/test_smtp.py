@@ -313,6 +313,37 @@ def test_send_nonascii_roundtrips_in_both_parts(
         assert "äöü" in content
 
 
+def test_send_long_line_uses_crlf_soft_breaks(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    r"""Long lines wrap with CRLF QP soft-breaks, never bare LF.
+
+    sendmail() sends bytes as-is; a bare-LF soft-break (=\n) gets
+    eol-normalized by the receiving MTA, dropping the char at the
+    76-col boundary (Claude->Cl=ude). policy.SMTP forces CRLF so the
+    soft-break survives transit intact.
+    """
+    marker = "Claude-SmartSuite-Marker-Ende"
+    body = "Auffuellungstext " * 8 + marker  # push marker past col 76
+    doc = (
+        "# Message\n"
+        "to: r@example.com\n"
+        "subject: Hi\n"
+        f"body: {body}"
+    )
+    smtp.send(doc, info)
+    _, _, raw = mock_smtp.sendmail.call_args[0]
+    # QP soft-breaks are present (long line) and all CRLF, none bare-LF.
+    assert b"=\r\n" in raw
+    assert b"=\n" not in raw
+    # Content survives the wrap intact.
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    html = next(
+        p for p in msg.walk() if p.get_content_type() == "text/html"
+    ).get_content()
+    assert marker in html
+
+
 def test_send_html_renders_ordered_and_unordered_lists(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
