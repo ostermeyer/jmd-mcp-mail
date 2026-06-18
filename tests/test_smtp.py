@@ -6,6 +6,8 @@ Email addresses and hostnames use ``example.com`` (RFC 2606).
 """
 from __future__ import annotations
 
+import email
+import email.policy
 import smtplib
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
@@ -258,3 +260,80 @@ def test_deliver_applies_leading_dot_escape(
     _, _, sent_bytes = mock_smtp.sendmail.call_args[0]
     assert b"=2Ecom/leading" in sent_bytes
     assert b"\n.com/leading" not in sent_bytes
+
+
+# ---------------------------------------------------------------------------
+# Body encoding (non-ASCII transport safety) + Markdown rendering
+# ---------------------------------------------------------------------------
+
+
+def test_send_nonascii_uses_quoted_printable_not_8bit(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """Non-ASCII parts are quoted-printable, never raw 8bit.
+
+    8bit text parts get mangled in transit when BODY=8BITMIME isn't
+    negotiated (sendmail does not). The arrow (U+2192) must therefore
+    be QP-encoded, and its raw UTF-8 bytes must not appear verbatim.
+    """
+    doc = (
+        "# Message\n"
+        "to: r@example.com\n"
+        "subject: Hi\n"
+        "body: Pfeil → Umlaut ä"
+    )
+    smtp.send(doc, info)
+    _, _, raw = mock_smtp.sendmail.call_args[0]
+    assert b"Content-Transfer-Encoding: 8bit" not in raw
+    assert b"quoted-printable" in raw
+    # Raw UTF-8 of the arrow must NOT be present (it is QP-encoded).
+    assert "→".encode() not in raw
+
+
+def test_send_nonascii_roundtrips_in_both_parts(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """Decoded plain and HTML parts both preserve non-ASCII characters."""
+    doc = (
+        "# Message\n"
+        "to: r@example.com\n"
+        "subject: Hi\n"
+        "body: Pfeil → Umlaute äöü"
+    )
+    smtp.send(doc, info)
+    _, _, raw = mock_smtp.sendmail.call_args[0]
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    for ctype in ("text/plain", "text/html"):
+        part = next(
+            p for p in msg.walk() if p.get_content_type() == ctype
+        )
+        assert part["Content-Transfer-Encoding"] == "quoted-printable"
+        content = part.get_content()
+        assert "→" in content
+        assert "äöü" in content
+
+
+def test_send_html_renders_ordered_and_unordered_lists(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """A numbered list and a bullet list render as separate <ol>/<ul>."""
+    doc = (
+        "# Message\n"
+        "to: r@example.com\n"
+        "subject: Hi\n"
+        "body:\n"
+        "> 1. eins\n"
+        "> 2. zwei\n"
+        "> \n"
+        "> - a\n"
+        "> - b"
+    )
+    smtp.send(doc, info)
+    _, _, raw = mock_smtp.sendmail.call_args[0]
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    html_part = next(
+        p for p in msg.walk() if p.get_content_type() == "text/html"
+    )
+    html = html_part.get_content()
+    assert "<ol>" in html
+    assert "<ul>" in html

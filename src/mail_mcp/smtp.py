@@ -90,7 +90,16 @@ def send(document: str, info: ConnectionInfo) -> str:
                     attach_paths.append(Path(p))
 
     body_with_footer = body + _FOOTER
-    html_body = md.markdown(body_with_footer)
+    # Extensions chosen for email rendering:
+    #   extra      — fenced code, tables, etc.
+    #   sane_lists — predictable list handling (respects start numbers,
+    #                doesn't promote under-indented items to phantom <li>)
+    #   nl2br      — preserve single line breaks; mail bodies are written
+    #                with hard newlines, not Markdown soft-wrap convention
+    html_body = md.markdown(
+        body_with_footer,
+        extensions=["extra", "sane_lists", "nl2br"],
+    )
     date = formatdate(usegmt=True)
 
     if attach_paths:
@@ -107,8 +116,14 @@ def send(document: str, info: ConnectionInfo) -> str:
         plain_msg["Date"] = date
         if cc_addrs:
             plain_msg["Cc"] = ", ".join(cc_addrs)
-        plain_msg.set_content(body_with_footer)
-        plain_msg.add_alternative(html_body, subtype="html")
+        # cte="quoted-printable" forces a 7-bit-safe transfer encoding.
+        # The default would be "8bit" (raw UTF-8 bytes), which is only
+        # safe when BODY=8BITMIME is negotiated — sendmail() does not do
+        # that, so 8-bit parts get mangled in transit (non-ASCII → mojibake).
+        plain_msg.set_content(body_with_footer, cte="quoted-printable")
+        plain_msg.add_alternative(
+            html_body, subtype="html", cte="quoted-printable",
+        )
         raw_bytes = plain_msg.as_bytes()
 
     try:
