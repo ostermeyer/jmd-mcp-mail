@@ -396,11 +396,18 @@ def send(service: str, username: str, document: str) -> str:
 
     Required fields in *document*: to, subject, body (Markdown).
     Optional fields: cc, bcc (comma-separated addresses),
-    attachments[] (each with a 'path' field).
+    attachments[] (each with a 'path' field), and **from-name**.
+
+    ** from-name ** — optional display name for the From header. When
+    set, recipients see "from-name <username>" instead of the bare
+    address (e.g. from-name: Andreas Ostermeyer → "Andreas Ostermeyer
+    <a@b.de>"). The envelope sender is unaffected; only the header
+    carries the name. Omit it to send from the bare address.
 
       # Message
       to: alice@example.com
       subject: Hello
+      from-name: Andreas Ostermeyer
       body:
       > Message text in **Markdown**
 

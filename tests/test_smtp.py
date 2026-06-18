@@ -356,3 +356,43 @@ def test_send_html_renders_ordered_and_unordered_lists(
     html = html_part.get_content()
     assert "<ol>" in html
     assert "<ul>" in html
+
+
+# ---------------------------------------------------------------------------
+# from-name (optional display name on the From header)
+# ---------------------------------------------------------------------------
+
+
+def test_send_from_name_sets_display_name(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """'from-name' produces a 'Name <addr>' From header."""
+    doc = (
+        "# Message\n"
+        "to: r@example.com\n"
+        "subject: Hi\n"
+        "from-name: Andreas Ostermeyer\n"
+        "body: Text"
+    )
+    smtp.send(doc, info)
+    envelope_from, _, raw = mock_smtp.sendmail.call_args[0]
+    # Envelope sender stays the bare address — only the header changes.
+    assert envelope_from == "user@example.com"
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    assert msg["From"] == "Andreas Ostermeyer <user@example.com>"
+
+
+def test_send_without_from_name_uses_bare_address(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """Omitting 'from-name' leaves the From header as the bare address."""
+    doc = (
+        "# Message\n"
+        "to: r@example.com\n"
+        "subject: Hi\n"
+        "body: Text"
+    )
+    smtp.send(doc, info)
+    _, _, raw = mock_smtp.sendmail.call_args[0]
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    assert msg["From"] == "user@example.com"

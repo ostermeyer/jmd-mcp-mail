@@ -20,7 +20,7 @@ from email.message import EmailMessage
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formatdate
+from email.utils import formataddr, formatdate
 from pathlib import Path
 
 import markdown as md  # type: ignore[import-untyped]
@@ -67,6 +67,7 @@ def send(document: str, info: ConnectionInfo) -> str:
     body = str(fields.get("body", "")).strip()
     cc_raw = str(fields.get("cc", "")).strip()
     bcc_raw = str(fields.get("bcc", "")).strip()
+    from_name = str(fields.get("from-name", "")).strip()
     attachments_raw = fields.get("attachments", [])
 
     if not to_raw:
@@ -102,9 +103,17 @@ def send(document: str, info: ConnectionInfo) -> str:
     )
     date = formatdate(usegmt=True)
 
+    # Optional display name on the From header (e.g. "Andreas Ostermeyer
+    # <a@b.de>"). The envelope sender stays the bare address (info.username
+    # in _deliver) — only the header carries the name.
+    from_header = (
+        formataddr((from_name, info.username)) if from_name
+        else info.username
+    )
+
     if attach_paths:
         msg_obj = _build_multipart(
-            info.username, to_addrs, cc_addrs, subject,
+            from_header, to_addrs, cc_addrs, subject,
             body_with_footer, html_body, attach_paths, date,
         )
         # policy.SMTP serializes with CRLF line endings. sendmail()
@@ -114,7 +123,7 @@ def send(document: str, info: ConnectionInfo) -> str:
         raw_bytes = msg_obj.as_bytes(policy=email_policy.SMTP)
     else:
         plain_msg = EmailMessage()
-        plain_msg["From"] = info.username
+        plain_msg["From"] = from_header
         plain_msg["To"] = ", ".join(to_addrs)
         plain_msg["Subject"] = subject
         plain_msg["Date"] = date
