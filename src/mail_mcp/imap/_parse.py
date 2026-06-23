@@ -12,10 +12,14 @@ import email.headerregistry
 import re
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import markdownify
 
 from mail_mcp import utf7
+
+if TYPE_CHECKING:
+    from mail_mcp._pseudonym import Pseudonymizer
 
 # ---------------------------------------------------------------------------
 # Domain dataclasses
@@ -443,36 +447,59 @@ def attachment_to_dict(rec: AttachmentRecord) -> dict[str, object]:
     return d
 
 
-def message_to_dict(rec: MessageRecord) -> dict[str, object]:
+def message_to_dict(
+    rec: MessageRecord,
+    pseudonymizer: Pseudonymizer | None = None,
+) -> dict[str, object]:
     """Convert a MessageRecord to a JMD-serializable dict.
 
     Args:
         rec: Parsed message record.
+        pseudonymizer: When set, every address (headers + free-text
+            occurrences in subject/body) is replaced with its
+            pseudonym before serialisation. ``None`` leaves the
+            message untouched (the default, non-DSGVO behaviour).
 
     Returns:
         Dict suitable for passing to jmd.serialize().
     """
+    subject = rec.subject
+    body = rec.body
+    from_ = rec.from_
+    to = rec.to
+    cc = rec.cc
+    bcc = rec.bcc
+    reply_to = rec.reply_to
+    if pseudonymizer is not None:
+        subject = pseudonymizer.text(subject)
+        body = pseudonymizer.text(body)
+        from_ = pseudonymizer.address(from_)
+        to = [pseudonymizer.address(a) for a in to]
+        cc = [pseudonymizer.address(a) for a in cc]
+        bcc = [pseudonymizer.address(a) for a in bcc]
+        reply_to = [pseudonymizer.address(a) for a in reply_to]
+
     d: dict[str, object] = {
         "id": rec.uid,
         "folder": rec.folder,
-        "subject": rec.subject,
+        "subject": subject,
         "date": rec.date,
     }
     if rec.size:
         d["size"] = rec.size
-    if rec.body:
-        d["body"] = rec.body
+    if body:
+        d["body"] = body
     if rec.flags:
         d["flags"] = rec.flags
     # Nested objects must come after all scalar fields.
-    d["from"] = address_to_dict(rec.from_)
-    d["to"] = [address_to_dict(a) for a in rec.to]
-    if rec.cc:
-        d["cc"] = [address_to_dict(a) for a in rec.cc]
-    if rec.bcc:
-        d["bcc"] = [address_to_dict(a) for a in rec.bcc]
-    if rec.reply_to:
-        d["reply-to"] = [address_to_dict(a) for a in rec.reply_to]
+    d["from"] = address_to_dict(from_)
+    d["to"] = [address_to_dict(a) for a in to]
+    if cc:
+        d["cc"] = [address_to_dict(a) for a in cc]
+    if bcc:
+        d["bcc"] = [address_to_dict(a) for a in bcc]
+    if reply_to:
+        d["reply-to"] = [address_to_dict(a) for a in reply_to]
     if rec.attachments:
         d["attachments"] = [attachment_to_dict(a) for a in rec.attachments]
     return d

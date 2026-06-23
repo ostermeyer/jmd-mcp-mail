@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from jmd import QueryField
 
+from mail_mcp import _pseudonym
+
 # Mapping from JMD field name to IMAP SEARCH key.
 _IMAP_KEY: dict[str, str] = {
     "from": "FROM",
@@ -57,6 +59,12 @@ def build(fields: list[QueryField]) -> str:
         imap_key = _IMAP_KEY.get(key)
         if not imap_key or not vals:
             continue
+
+        # Recipient predicates may carry pseudonyms — resolve known
+        # tokens back to the real address before building the SEARCH;
+        # unknown values pass through for plain substring matching.
+        if key in ("from", "to"):
+            vals = [_pseudonym.resolve_search(str(v)) for v in vals]
 
         match op:
             case "=" | "~" | "regex":

@@ -69,6 +69,13 @@ class Account:
             broker per call).
         broker_client: For ``oauth2`` accounts, the jmd-mcp-oauth2
             client name to fetch tokens from (e.g. ``outlook``).
+        pseudonymize: Whether the read path pseudonymises email
+            identities before they reach the LLM (GDPR data
+            minimisation). Defaults to ``True`` (privacy by default,
+            Art. 25(2)); set ``False`` to opt out per account.
+        pseudonymize_domain: Whether pseudonyms carry a domain token
+            so "same company" relationships survive. Opt-in; defaults
+            to ``False``.
     """
 
     label: str
@@ -77,15 +84,17 @@ class Account:
     username: str
     auth: str = "basic"
     broker_client: str = ""
+    pseudonymize: bool = True
+    pseudonymize_domain: bool = False
 
-    def as_jmd_dict(self) -> dict[str, str]:
+    def as_jmd_dict(self) -> dict[str, object]:
         """Map this record to the dict shape ``jmd.serialize`` consumes.
 
-        ``auth`` and ``broker-client`` are emitted only when they
-        differ from the Basic-Auth default, so basic accounts keep
-        their original four-field shape.
+        ``auth``, ``broker-client`` and the pseudonymisation flags are
+        emitted only when they differ from their defaults, so a plain
+        Basic-Auth account keeps its original four-field shape.
         """
-        d = {
+        d: dict[str, object] = {
             "label": self.label,
             "imap_service": self.imap_service,
             "smtp_service": self.smtp_service,
@@ -95,6 +104,10 @@ class Account:
             d["auth"] = self.auth
         if self.broker_client:
             d["broker-client"] = self.broker_client
+        if not self.pseudonymize:
+            d["pseudonymize"] = False
+        if self.pseudonymize_domain:
+            d["pseudonymize-domain"] = True
         return d
 
 
@@ -122,6 +135,19 @@ def _config_path() -> Path:
         Path.home() / ".config"
     )
     return Path(base) / "jmd-mcp-mail" / "accounts.jmd"
+
+
+def _as_bool(value: object, default: bool) -> bool:
+    """Coerce a JMD scalar to bool, falling back to *default* on absence.
+
+    Accepts native booleans and the usual truthy string spellings; an
+    absent value (``None``) yields *default*.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
 
 
 def _validate(account: Account) -> None:
@@ -206,6 +232,12 @@ def load() -> list[Account]:
                     username=str(item["username"]),
                     auth=str(item.get("auth", "basic")),
                     broker_client=str(item.get("broker-client", "")),
+                    pseudonymize=_as_bool(
+                        item.get("pseudonymize"), True
+                    ),
+                    pseudonymize_domain=_as_bool(
+                        item.get("pseudonymize-domain"), False
+                    ),
                 )
             )
         except KeyError as exc:
@@ -359,6 +391,10 @@ def _handle_data(document: str) -> str:
                 username=str(data["username"]),
                 auth=str(data.get("auth", "basic")),
                 broker_client=str(data.get("broker-client", "")),
+                pseudonymize=_as_bool(data.get("pseudonymize"), True),
+                pseudonymize_domain=_as_bool(
+                    data.get("pseudonymize-domain"), False
+                ),
             )
         except KeyError as exc:
             return _error(

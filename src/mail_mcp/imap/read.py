@@ -11,6 +11,7 @@ from jmd import JMDParser, JMDQueryParser, jmd_mode, jmd_to_dict, serialize
 
 from mail_mcp import schemas
 from mail_mcp._endpoint import ConnectionInfo
+from mail_mcp._pseudonym import Pseudonymizer
 from mail_mcp.imap._connection import encode_folder, imap_call, open_imap
 from mail_mcp.imap._criteria import build as build_criteria
 from mail_mcp.imap._parse import (
@@ -38,6 +39,13 @@ def _error(status: int, code: str, message: str) -> str:
         {"status": status, "code": code, "message": message},
         label="Error",
     )
+
+
+def _pseudonymizer(info: ConnectionInfo) -> Pseudonymizer | None:
+    """Build a pseudonymiser for this call, or ``None`` when disabled."""
+    if not info.pseudonymize:
+        return None
+    return Pseudonymizer(domain=info.pseudonymize_domain)
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +281,8 @@ async def _read_message(document: str, info: ConnectionInfo) -> str:
                         )
                     rec = parse_message(uid, raw, folder, download_dest)
                     return serialize(
-                        message_to_dict(rec), label=_LABEL_MESSAGE
+                        message_to_dict(rec, _pseudonymizer(info)),
+                        label=_LABEL_MESSAGE,
                     )
                 case _:
                     return _error(
@@ -364,6 +373,7 @@ async def _query_messages(document: str, info: ConnectionInfo) -> str:
             if st2 != "OK":
                 return _error(500, "imap_error", "FETCH failed")
 
+            pseudonymizer = _pseudonymizer(info)
             by_uid: dict[str, dict[str, object]] = {}
             for i, item in enumerate(fetch_data):
                 if not isinstance(item, tuple) or len(item) < 2:
@@ -372,7 +382,8 @@ async def _query_messages(document: str, info: ConnectionInfo) -> str:
                     continue
                 uid = _uid_at(fetch_data, i)
                 by_uid[uid] = message_to_dict(
-                    parse_message(uid, item[1], folder, headers_only=True)
+                    parse_message(uid, item[1], folder, headers_only=True),
+                    pseudonymizer,
                 )
             # Servers return FETCH results in sequence order regardless of
             # the requested UID order, so re-emit in page_uids order

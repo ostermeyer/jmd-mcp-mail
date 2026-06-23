@@ -26,15 +26,41 @@ from pathlib import Path
 import markdown as md  # type: ignore[import-untyped]
 from jmd import jmd_mode, jmd_to_dict, serialize
 
+from mail_mcp import _pseudonym
 from mail_mcp._endpoint import ConnectionInfo, TlsMode, xoauth2_string
 
 _LABEL = "Message"
+
+_UNKNOWN_PSEUDONYM = (
+    "Unknown recipient pseudonym {!r}. Re-read the message to refresh "
+    "the mapping, or supply a real email address."
+)
 _REPO_URL = "https://github.com/ostermeyer/jmd-mcp-mail"
 _FOOTER = (
     "\n\n---\n"
     "*This email was sent by an AI assistant using "
     f"[jmd-mcp-mail]({_REPO_URL}).*"
 )
+
+
+def _resolve_recipients(addrs: list[str]) -> tuple[list[str], str | None]:
+    """Resolve recipient pseudonyms to real addresses.
+
+    Each entry is mapped via the pseudonym reverse lookup. A real
+    address (or user-supplied new recipient) passes through unchanged.
+
+    Returns:
+        ``(resolved, None)`` on success, or ``([], offending)`` if an
+        entry is an unknown bare token — the caller should reject the
+        send rather than guess.
+    """
+    resolved: list[str] = []
+    for addr in addrs:
+        real = _pseudonym.resolve_recipient(addr)
+        if real is None:
+            return [], addr
+        resolved.append(real)
+    return resolved, None
 
 
 def send(document: str, info: ConnectionInfo) -> str:
@@ -77,10 +103,24 @@ def send(document: str, info: ConnectionInfo) -> str:
     if not body:
         return _error(400, "missing_fields", "'body' is required")
 
+    # Display lists keep whatever the caller passed (pseudonyms when
+    # pseudonymisation is active) — echoed back in the confirmation so
+    # no real address leaks into the response. The resolved lists carry
+    # the real, routable addresses used on the wire.
     to_addrs = [a.strip() for a in to_raw.split(",") if a.strip()]
     cc_addrs = [a.strip() for a in cc_raw.split(",") if a.strip()]
     bcc_addrs = [a.strip() for a in bcc_raw.split(",") if a.strip()]
-    all_recipients = to_addrs + cc_addrs + bcc_addrs
+
+    real_to, bad = _resolve_recipients(to_addrs)
+    if bad is not None:
+        return _error(400, "unknown_pseudonym", _UNKNOWN_PSEUDONYM.format(bad))
+    real_cc, bad = _resolve_recipients(cc_addrs)
+    if bad is not None:
+        return _error(400, "unknown_pseudonym", _UNKNOWN_PSEUDONYM.format(bad))
+    real_bcc, bad = _resolve_recipients(bcc_addrs)
+    if bad is not None:
+        return _error(400, "unknown_pseudonym", _UNKNOWN_PSEUDONYM.format(bad))
+    all_recipients = real_to + real_cc + real_bcc
 
     attach_paths: list[Path] = []
     if isinstance(attachments_raw, list):
@@ -113,7 +153,7 @@ def send(document: str, info: ConnectionInfo) -> str:
 
     if attach_paths:
         msg_obj = _build_multipart(
-            from_header, to_addrs, cc_addrs, subject,
+            from_header, real_to, real_cc, subject,
             body_with_footer, html_body, attach_paths, date,
         )
         # policy.SMTP serializes with CRLF line endings. sendmail()
@@ -124,11 +164,11 @@ def send(document: str, info: ConnectionInfo) -> str:
     else:
         plain_msg = EmailMessage()
         plain_msg["From"] = from_header
-        plain_msg["To"] = ", ".join(to_addrs)
+        plain_msg["To"] = ", ".join(real_to)
         plain_msg["Subject"] = subject
         plain_msg["Date"] = date
-        if cc_addrs:
-            plain_msg["Cc"] = ", ".join(cc_addrs)
+        if real_cc:
+            plain_msg["Cc"] = ", ".join(real_cc)
         # cte="quoted-printable" forces a 7-bit-safe transfer encoding.
         # The default would be "8bit" (raw UTF-8 bytes), which is only
         # safe when BODY=8BITMIME is negotiated — sendmail() does not do

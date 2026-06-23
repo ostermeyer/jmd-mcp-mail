@@ -89,6 +89,13 @@ def _resolve_info(
         fm = parse_frontmatter(document)
     except ValueError as exc:
         return _error(400, "bad_request", str(exc))
+
+    # Per-account DSGVO pseudonymisation flags. Unregistered accounts
+    # default to pseudonymise-on (privacy by default, Art. 25(2)).
+    acct = accounts_module.find_by_endpoint(service, username)
+    pseudonymize = acct.pseudonymize if acct else True
+    pseudonymize_domain = acct.pseudonymize_domain if acct else False
+
     sealed = fm.get("access-token-sealed")
     if sealed:
         try:
@@ -99,13 +106,20 @@ def _resolve_info(
                 f"could not open the sealed access token: {exc}",
             )
         try:
-            return ConnectionInfo.for_oauth(service, username, token)
+            return ConnectionInfo.for_oauth(
+                service, username, token,
+                pseudonymize=pseudonymize,
+                pseudonymize_domain=pseudonymize_domain,
+            )
         except ValueError as exc:
             return _error(400, "bad_request", str(exc))
     try:
-        return ConnectionInfo.resolve(service, username)
+        return ConnectionInfo.resolve(
+            service, username,
+            pseudonymize=pseudonymize,
+            pseudonymize_domain=pseudonymize_domain,
+        )
     except CredentialNotFoundError as exc:
-        acct = accounts_module.find_by_endpoint(service, username)
         if acct is not None and acct.auth == "oauth2":
             return _error(
                 401, "oauth_token_required",
@@ -235,6 +249,17 @@ async def read(service: str, username: str, document: str) -> str:
 
         Calling an oauth2 account without a sealed token returns
         ``oauth_token_required``, naming the broker-client and steps.
+
+    Pseudonymised identities (DSGVO):
+        By default, email addresses and display names are replaced with
+        stable pseudonyms before they reach you — e.g. ``Alice <a1b2c3>``
+        (serialised as ``email: a1b2c3``, ``name: Alice``). A pseudonym
+        is an opaque handle, NOT a real address. To reply or search, pass
+        the pseudonym back verbatim (``to: a1b2c3`` or ``from: a1b2c3``);
+        the server resolves it to the real address, which never enters
+        this context. If the user needs the real address they look it up
+        in their own mail client. Pseudonymisation is on by default and
+        disabled per account in the registry (``pseudonymize: false``).
     """
     info = _resolve_info(service, username, document)
     if isinstance(info, str):
@@ -418,6 +443,13 @@ def send(service: str, username: str, document: str) -> str:
     OAuth2 accounts use a sealed token instead of a password: pass it
     as an ``access-token-sealed:`` frontmatter key (see the ``read``
     tool for how to obtain one from jmd-mcp-oauth2).
+
+    Pseudonymised recipients (DSGVO): when an account pseudonymises
+    identities, address recipients by the pseudonym you were given
+    (e.g. ``to: a1b2c3``); the server resolves it to the real address,
+    and the confirmation echoes the pseudonym, not the real address. An
+    unknown pseudonym returns ``unknown_pseudonym`` — re-read the message
+    to refresh the mapping, or pass a real address for a new recipient.
 
     Frontmatter policy: observable tolerance — unknown keys are
     echoed in the response as 'ignored-keys: ...'.

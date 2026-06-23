@@ -63,7 +63,9 @@ imap_service: string
 smtp_service: string
 username: string email
 auth: string optional
-broker-client: string optional"""
+broker-client: string optional
+pseudonymize: boolean optional
+pseudonymize-domain: boolean optional"""
 
 PUBLIC_KEY: str = """\
 #! PublicKey
