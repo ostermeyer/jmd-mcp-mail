@@ -172,5 +172,77 @@ den Kontext — das ist bei einer ausdrücklich nutzerinitiierten Aktion akzepti
 
 ---
 
-*Designkonsens festgehalten am 2026-06-23. Implementierung erst nach ausdrücklichem
-Go.*
+## 12. Adressbuch / Kontakt-Import
+
+Ermöglicht das Adressieren von Personen, deren Mail man (noch) nicht gelesen hat —
+z. B. weil das Konto serverseitig für den MCP-Server gesperrt ist —, ohne dass deren
+echte Adresse je in den LLM-Kontext gelangt. Konzeptionell ein **persistent
+gepflegter Seed für dieselbe In-Memory-Rückwärts-Map** wie die Lese-Pseudonyme:
+gleicher HMAC-Token ⇒ konsistente Identität, egal ob aus gelesener Mail oder Import.
+
+### 12.1 Quellen (nur Pfade, nie Inhalte über die Tool-Grenze)
+
+- **Primär:** wiederholbares CLI-Argument am Entrypoint (`--contacts <pfad>`),
+  gesetzt in der MCP-Server-Konfiguration (`args` im mcpServers-Block).
+- **Alternativ:** eine Umgebungsvariable (`JMD_MCP_MAIL_CONTACT_SOURCES`,
+  pfadgetrennte Liste) — unabhängig davon, wie/woher sie gesetzt wird (kein
+  dotenv-Parsing serverseitig, schlicht `os.environ`).
+- Ein Pfad ist kein PII; die Dateien liegen außerhalb des Servers
+  (Nutzer-Verantwortung) und werden serverseitig gelesen.
+
+### 12.2 Formate
+
+- **vCard** (`.vcf`) via `vobject` — primär (Apple/Google/Outlook/Thunderbird).
+- **CSV** via stdlib `csv` mit tolerantem Spalten-Mapping (Outlook-/Google-Header).
+
+### 12.3 Speicherung & Lebenszyklus
+
+- **Strikt in-memory**, kein `contacts.jmd`, nichts at rest. Die einzigen
+  PII-Dateien sind die nutzereigenen Exporte.
+- Startup parst alle Quellen → In-Memory. `reimport` lädt sie zur Laufzeit neu.
+
+### 12.4 Label-Ableitung — Form `<Namensteil> <key>`
+
+`<key>` (Einweg-HMAC, identisch zur Lese-Pseudonymisierung) ist **immer** Bestandteil
+und trägt die Eindeutigkeit. Der Namensteil ist reine Lesbarkeits-/Wiedererkennungs-
+Hilfe:
+
+- Basis: **Vorname** (aus vCard `N`, wo Vor-/Nachname klar getrennt sind).
+- Bei Vornamen-Kollision: + **kürzestes eindeutiges Nachnamen-Präfix** + „."
+  (`Rebecca Sch.` vs. `Rebecca Spe.`).
+- Mehrere Adressen pro Kontakt: **je Adresse ein diskreter Eintrag/Token**, im Label
+  per vCard-`TYPE` unterschieden (`(geschäftlich)` / `(privat)`).
+- Kein Nachname / Trennung nicht möglich → nur `Vorname <key>` bzw. reiner `<key>`.
+
+Beispiele: `Rebecca <k7f2a9>`, `Rebecca Sch. <k7f2a9>`,
+`Rebecca Sch. (geschäftlich) <k7f2a9>`.
+
+### 12.5 Tool-Oberfläche
+
+- Eigenes **`contacts`**-Tool: `# Contacts { reimport }` → `# Contacts[]` mit
+  `(label, token)`.
+- **Rückgabe-Invariante:** nur `count` + `(label, token)`; **niemals** Adressen oder
+  Roh-Inhalt — unabhängig vom Pfad. Damit ist auch ein vom LLM frei genannter oder
+  halluzinierter Pfad harmlos (es kommt keine Adresse zurück).
+
+### 12.6 Auflösung beim Senden / Suchen
+
+- `send` löst `to`/`cc`/`bcc` per **Label *oder* Token** → echte Adresse
+  (serverseitig, nie im Kontext). Unbekannt → `unknown_pseudonym` (Containment).
+- Der **Lese-Pfad** reichert den Namensteil aus den Kontakten an
+  (`Rebecca Sch. <key>` statt `Rebecca <key>`), wenn die Adresse bekannt ist —
+  gleicher `<key>`, gleiche Identität.
+
+### 12.7 Betroffene Dateien
+
+| Datei | Rolle |
+|---|---|
+| `src/mail_mcp/_contacts.py` *(neu)* | Quellen-Discovery (args/env), vCard/CSV-Parser, Label-Ableitung, Seed der In-Memory-Map |
+| `src/mail_mcp/_pseudonym.py` | gemeinsame Token-Erzeugung + Rückwärts-Map (von Kontakten mitgenutzt) |
+| `src/mail_mcp/server.py` | `contacts`-Tool + Startup-Import; Label-Anreicherung im Read-Pfad |
+| `src/mail_mcp/smtp.py` / `imap/_criteria.py` | Auflösung per Label (zusätzlich zum Token) |
+
+---
+
+*Kern-Pseudonymisierung umgesetzt (Commit f58215f). Adressbuch / Kontakt-Import:
+Designkonsens 2026-06-23, Umsetzung nach ausdrücklichem Go.*
