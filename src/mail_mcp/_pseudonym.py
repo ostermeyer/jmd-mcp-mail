@@ -183,6 +183,18 @@ class Pseudonymizer:
         return _EMAIL_RE.sub(lambda m: f"<{self._bracket(m.group(0))}>", s)
 
 
+def register(address: str) -> str:
+    """Register a known address in the reverse map and return its token.
+
+    Used to seed the in-memory map from the address book. Produces the same
+    (non-domain) token as the read-path pseudonymiser, so a contact and the
+    same person seen in a mail share one identity.
+    """
+    token = _hmac_token(_norm(address), _TOKEN_LEN)
+    _reverse[token] = address
+    return token
+
+
 def resolve_recipient(value: str) -> str | None:
     """Resolve an inbound recipient string to a real address.
 

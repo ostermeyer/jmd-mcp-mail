@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import time
 
+from jmd import jmd_mode, jmd_to_dict, serialize
 from mcp.server.fastmcp import FastMCP
 
-from mail_mcp import _sealing, smtp
+from mail_mcp import _contacts, _sealing, smtp
 from mail_mcp import accounts as accounts_module
 from mail_mcp._credentials import (
     CredentialNotFoundError,
@@ -554,8 +555,79 @@ def accounts(document: str) -> str:
         return _error(400, "bad_request", str(exc))
 
 
+_CONTACTS_SCHEMA = """\
+#! Contacts
+label: string readonly
+token: string readonly"""
+
+
+@mcp.tool()
+def contacts(document: str) -> str:
+    r"""List or refresh the in-memory contact address book (DSGVO).
+
+    The address book is seeded at startup from files configured on the
+    server (``--contacts <path>`` args, or the
+    ``JMD_MCP_MAIL_CONTACT_SOURCES`` environment variable) — vCard or CSV
+    exports from any mainstream mail client. It lets you address people you
+    have never exchanged mail with, **without their real address ever
+    entering this context**: each entry is a pseudonym ``label`` (e.g.
+    ``Rebecca Sch. <a1b2c3>``) plus its ``token``. The real addresses live
+    only inside the server and are resolved at send time.
+
+    Document forms:
+
+        #! Contacts                 (schema)
+
+        # Contacts[]                (list current entries: label + token)
+
+        # Contacts                  (re-read the configured sources, then list)
+        reimport: true
+
+    To write to someone here, pass their pseudonym to ``send`` exactly as
+    shown (``to: Rebecca Sch. <a1b2c3>`` or ``to: a1b2c3``); the server
+    resolves it to the real address. This tool NEVER returns an address.
+    Adding contacts is out-of-band (edit your export, then ``reimport``);
+    there is no way to add a contact through a tool call.
+    """
+    try:
+        mode = jmd_mode(document)
+    except Exception as exc:  # noqa: BLE001 — opaque parser errors
+        return _error(400, "bad_request", f"unparseable document: {exc}")
+
+    if mode == "schema":
+        return _CONTACTS_SCHEMA
+
+    if mode == "data":
+        data = jmd_to_dict(document)
+        reimport = (
+            isinstance(data, dict)
+            and str(data.get("reimport", "")).strip().lower()
+            in ("true", "1", "yes", "on")
+        )
+        entries = _contacts.load() if reimport else _contacts.current()
+        payload = [{"label": e.label, "token": e.token} for e in entries]
+        return f"count: {len(payload)}\n\n" + serialize(
+            payload, label="Contacts"
+        )
+
+    return _error(400, "bad_request", f"unsupported mode: {mode!r}")
+
+
 def main() -> None:
-    """Entry point: start the MCP server."""
+    """Entry point: seed contacts from configured sources, then run."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="jmd-mcp-mail", add_help=False)
+    parser.add_argument(
+        "--contacts", action="append", default=[], dest="contacts",
+        help="Path to a vCard/CSV contact export (repeatable).",
+    )
+    args, _unknown = parser.parse_known_args()
+    if args.contacts:
+        _contacts.set_cli_sources(args.contacts)
+    # Seed the address book; load() is self-contained and never raises.
+    _contacts.load()
+
     mcp.run()
 
 

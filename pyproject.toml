@@ -30,6 +30,7 @@ dependencies = [
     "markdownify>=0.11",
     "pynacl>=1.5",
     "keyring>=25.0",
+    "vobject>=0.9",
 ]
 
 [project.urls]
@@ -75,6 +76,10 @@ mypy_path = "../jmd-impl"
 
 [[tool.mypy.overrides]]
 module = "nacl.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "vobject.*"
 ignore_missing_imports = true
 
 [dependency-groups]
