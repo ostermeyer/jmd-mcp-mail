@@ -48,6 +48,23 @@ def _pseudonymizer(info: ConnectionInfo) -> Pseudonymizer | None:
     return Pseudonymizer(domain=info.pseudonymize_domain)
 
 
+def _mask_enabled(document: str) -> bool:
+    """Whether content masking applies — on by default, opt-out per call.
+
+    Disabled only when the document frontmatter carries
+    ``mask-content: false`` (or a falsey spelling).
+    """
+    try:
+        parser = JMDParser()
+        parser.parse(document)
+        val = parser.frontmatter.get("mask-content")
+    except Exception:  # noqa: BLE001 — opaque parser errors default to on
+        return True
+    if val is None:
+        return True
+    return str(val).strip().lower() not in ("false", "0", "no", "off")
+
+
 # ---------------------------------------------------------------------------
 # Folder helpers
 # ---------------------------------------------------------------------------
@@ -281,7 +298,10 @@ async def _read_message(document: str, info: ConnectionInfo) -> str:
                         )
                     rec = parse_message(uid, raw, folder, download_dest)
                     return serialize(
-                        message_to_dict(rec, _pseudonymizer(info)),
+                        message_to_dict(
+                            rec, _pseudonymizer(info),
+                            _mask_enabled(document),
+                        ),
                         label=_LABEL_MESSAGE,
                     )
                 case _:
@@ -374,6 +394,7 @@ async def _query_messages(document: str, info: ConnectionInfo) -> str:
                 return _error(500, "imap_error", "FETCH failed")
 
             pseudonymizer = _pseudonymizer(info)
+            mask = _mask_enabled(document)
             by_uid: dict[str, dict[str, object]] = {}
             for i, item in enumerate(fetch_data):
                 if not isinstance(item, tuple) or len(item) < 2:
@@ -384,6 +405,7 @@ async def _query_messages(document: str, info: ConnectionInfo) -> str:
                 by_uid[uid] = message_to_dict(
                     parse_message(uid, item[1], folder, headers_only=True),
                     pseudonymizer,
+                    mask,
                 )
             # Servers return FETCH results in sequence order regardless of
             # the requested UID order, so re-emit in page_uids order

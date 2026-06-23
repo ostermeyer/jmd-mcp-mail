@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import markdownify
 
-from mail_mcp import utf7
+from mail_mcp import _masking, utf7
 
 if TYPE_CHECKING:
     from mail_mcp._pseudonym import Pseudonymizer
@@ -450,6 +450,7 @@ def attachment_to_dict(rec: AttachmentRecord) -> dict[str, object]:
 def message_to_dict(
     rec: MessageRecord,
     pseudonymizer: Pseudonymizer | None = None,
+    mask_content: bool = False,
 ) -> dict[str, object]:
     """Convert a MessageRecord to a JMD-serializable dict.
 
@@ -458,7 +459,10 @@ def message_to_dict(
         pseudonymizer: When set, every address (headers + free-text
             occurrences in subject/body) is replaced with its
             pseudonym before serialisation. ``None`` leaves the
-            message untouched (the default, non-DSGVO behaviour).
+            addresses untouched (the default, non-DSGVO behaviour).
+        mask_content: When True, the content-layer masks (servers,
+            IPs, phone numbers, host:port) are applied to subject and
+            body after pseudonymisation — see :mod:`mail_mcp._masking`.
 
     Returns:
         Dict suitable for passing to jmd.serialize().
@@ -478,6 +482,11 @@ def message_to_dict(
         cc = [pseudonymizer.address(a) for a in cc]
         bcc = [pseudonymizer.address(a) for a in bcc]
         reply_to = [pseudonymizer.address(a) for a in reply_to]
+    if mask_content:
+        # Content layer runs after identity pseudonymisation (raw
+        # addresses are already gone) — see MTT policy ordering.
+        subject = _masking.mask(subject)
+        body = _masking.mask(body)
 
     d: dict[str, object] = {
         "id": rec.uid,

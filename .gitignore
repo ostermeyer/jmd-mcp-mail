@@ -28,3 +28,6 @@ MANIFEST
 .vscode/
 .idea/
 .DS_Store
+
+# MTT-internal policy reference — not part of the OSS repo
+docs/fach-anonymisierungsregeln-llm.md

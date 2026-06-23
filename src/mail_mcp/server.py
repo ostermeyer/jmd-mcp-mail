@@ -39,7 +39,7 @@ from mail_mcp.imap.read import _error
 # Known frontmatter keys per tool (observable tolerance / strict refusal).
 _KNOWN_FM_READ: frozenset[str] = frozenset({
     "page", "page-size", "count", "debug",
-    "access-token-sealed",
+    "access-token-sealed", "mask-content",
 })
 _KNOWN_FM_WRITE: frozenset[str] = frozenset({
     "rename-to", "move-to", "copy-to", "debug",
