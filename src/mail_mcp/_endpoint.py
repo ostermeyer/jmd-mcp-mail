@@ -78,17 +78,11 @@ class ConnectionInfo:
     username: str
     password: str
     access_token: str = ""
-    pseudonymize: bool = True
-    pseudonymize_domain: bool = False
+    from_name: str = ""
 
     @classmethod
     def resolve(
-        cls,
-        service: str,
-        username: str,
-        *,
-        pseudonymize: bool = True,
-        pseudonymize_domain: bool = False,
+        cls, service: str, username: str, *, from_name: str = "",
     ) -> ConnectionInfo:
         """Build a connection from ``(service, username)``.
 
@@ -96,8 +90,7 @@ class ConnectionInfo:
             service: Endpoint of the form ``host:port`` (IPv6:
                 ``[host]:port``).
             username: SMTP/IMAP login.
-            pseudonymize: Whether to pseudonymise identities on read.
-            pseudonymize_domain: Whether to add a domain token.
+            from_name: Optional display name for the From header.
 
         Returns:
             A fully populated :class:`ConnectionInfo`.
@@ -116,19 +109,13 @@ class ConnectionInfo:
             tls_mode=endpoint.tls_mode,
             username=username,
             password=password,
-            pseudonymize=pseudonymize,
-            pseudonymize_domain=pseudonymize_domain,
+            from_name=from_name,
         )
 
     @classmethod
     def for_oauth(
-        cls,
-        service: str,
-        username: str,
-        access_token: str,
-        *,
-        pseudonymize: bool = True,
-        pseudonymize_domain: bool = False,
+        cls, service: str, username: str, access_token: str,
+        *, from_name: str = "",
     ) -> ConnectionInfo:
         """Build an OAuth2 connection (XOAUTH2, no keystore password).
 
@@ -136,8 +123,7 @@ class ConnectionInfo:
             service: Endpoint of the form ``host:port``.
             username: SMTP/IMAP login.
             access_token: A bearer access token (already unsealed).
-            pseudonymize: Whether to pseudonymise identities on read.
-            pseudonymize_domain: Whether to add a domain token.
+            from_name: Optional display name for the From header.
 
         Returns:
             A :class:`ConnectionInfo` with ``access_token`` set; the
@@ -154,8 +140,7 @@ class ConnectionInfo:
             username=username,
             password="",
             access_token=access_token,
-            pseudonymize=pseudonymize,
-            pseudonymize_domain=pseudonymize_domain,
+            from_name=from_name,
         )
 
 

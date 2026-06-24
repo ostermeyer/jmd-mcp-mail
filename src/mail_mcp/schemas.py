@@ -56,16 +56,16 @@ body: string optional
 
 ACCOUNT: str = """\
 see-also: Folder, Message, EmailAddress
+note: config.jmd is authored out-of-band; this tool only lists labels.
 
 #! Account
 label: string
-imap_service: string
-smtp_service: string
-username: string email
+imap: string readonly
+smtp: string readonly
+username: string email readonly
 auth: string optional
 broker-client: string optional
-pseudonymize: boolean optional
-pseudonymize-domain: boolean optional"""
+from-name: string readonly optional"""
 
 PUBLIC_KEY: str = """\
 #! PublicKey

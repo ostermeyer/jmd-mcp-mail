@@ -7,7 +7,7 @@ An MCP server that lets an LLM agent (Claude Desktop, Claude Code, …) work wit
 
 ## What's special
 
-- **Per-call identity.** Each tool call carries `(service, username)` — the mail-server endpoint and the login. No global config file, no "configured accounts" to maintain. The LLM passes the identity for the account it's working with right now.
+- **Label addressing, out-of-band config.** Accounts live in one out-of-reach config file (`config.jmd`) that you author directly. Each tool call carries just an `account` label; the server resolves the endpoints and login internally, so your email address and the endpoints never enter the LLM context.
 - **Credentials never enter the LLM context.** Passwords live in the OS keystore (macOS Keychain, Windows Credential Manager, Linux Secret Service). The server reads them via the platform's keystore CLI in its own process and uses them in IMAP/SMTP handshakes — they're never returned in any tool output, never logged.
 - **Seeding stays out-of-band.** New keystore items are created by the user in their own terminal via a copy-paste shell command. The password is typed into the keystore CLI's tty-interactive prompt and never traverses any tool call.
 - **JMD-native I/O.** Tool inputs and outputs are JMD documents (Markdown-shaped, LLM-friendly). Mail bodies round-trip Markdown ↔ HTML transparently.
@@ -65,9 +65,9 @@ claude mcp add jmd-mcp-mail jmd-mcp-mail
 
 ## Setting up credentials
 
-This is the only setup step.  You do it once per mail account, in your own terminal.
+Each account is set up in two out-of-band steps, both in your own terminal — never through a tool call: **(1)** add it to `config.jmd` (see *Account configuration* below), and **(2)** seed its password into the OS keystore as shown here. (OAuth2 accounts skip step 2 — see *OAuth2 accounts*.)
 
-A mail account needs **two keystore items** because IMAP (read/write/delete) and SMTP (send) are separate endpoints, each with its own authentication:
+A Basic-Auth account needs **two keystore items** because IMAP (read/write/delete) and SMTP (send) are separate endpoints, each with its own authentication:
 
 | Operation | Endpoint shape | Example (IONOS) |
 |---|---|---|
@@ -111,7 +111,7 @@ If typing the password on the command line is uncomfortable, you can also seed v
 
 ### Don't know the endpoints?  Just ask the agent.
 
-The LLM knows the canonical endpoints for mainstream providers (Gmail, Outlook/Office 365, IONOS, Fastmail, GMX, web.de, …) and will offer you the exact copy-paste commands when you say something like *"set up my IONOS account andreas@example.com"*.  If you try to send or read first, the server returns an error that contains the exact seed command, and the agent will surface it for you.
+The LLM knows the canonical endpoints for mainstream providers (Gmail, Outlook/Office 365, IONOS, Fastmail, GMX, web.de, …). Say *"help me set up my IONOS account andreas@example.com"* and it will give you a ready-to-paste `config.jmd` block **and** the keystore seed commands to apply. If you read or send before seeding, the server returns `credential_missing` with the exact seed command, which the agent surfaces.
 
 ### Provider notes
 
@@ -124,25 +124,39 @@ The LLM knows the canonical endpoints for mainstream providers (Gmail, Outlook/O
 | GMX | `imap.gmx.net:993` | `mail.gmx.net:587` | IMAP must be enabled in account settings |
 | web.de | `imap.web.de:993` | `smtp.web.de:587` | IMAP must be enabled in account settings |
 
-## Account registry (optional)
+## Account configuration (`config.jmd`)
 
-If you don't want to type the full `(service, username)` pair for every call, you can register short labels for your accounts and refer to them by label later. The registry lives in a small JMD file on disk:
+Accounts are defined in **one commented JMD file you author directly**. The LLM never reads or writes it — so your email address and the endpoints stay out of the model context; tool calls carry only the `account` label. The file lives in a config directory:
 
 | OS | Path |
 |---|---|
-| Windows | `%APPDATA%\jmd-mcp-mail\accounts.jmd` |
-| macOS | `~/Library/Application Support/jmd-mcp-mail/accounts.jmd` |
-| Linux | `$XDG_CONFIG_HOME/jmd-mcp-mail/accounts.jmd` (default `~/.config/jmd-mcp-mail/accounts.jmd`) |
+| all platforms | `~/.jmd-mcp-mail/config.jmd` |
 
-(Override the location with `JMD_MCP_MAIL_ACCOUNTS_PATH=…` if you want, e.g. to keep it in a synced folder.)
+(Override the *directory* with `JMD_MCP_MAIL_HOME=…`, e.g. to keep it in a synced folder.)
 
-**No passwords live here** — only the metadata (`label`, `imap_service`, `smtp_service`, `username`). The actual credentials stay in the OS keystore, looked up by `(service, username)` at tool-call time exactly as before. The registry is just a convenience layer.
+**No passwords live here** — only routing metadata; passwords stay in the OS keystore (see *Setting up credentials*). Author it by hand:
 
-You'll usually never edit the file by hand. The agent does it through the `accounts` tool:
+```
+# Account[]
+- label: ionos
+  imap: imap.ionos.de:993
+  smtp: smtp.ionos.de:587
+  username: andreas@ostermeyer.de
+  from-name: Andreas Ostermeyer    # optional From-header display name
+- label: outlook
+  imap: outlook.office365.com:993
+  smtp: smtp-mail.outlook.com:587
+  username: you@outlook.com
+  auth: oauth2                     # basic (default) or oauth2
+  broker-client: outlook           # required for oauth2
+```
 
-- *"Show me my configured mail accounts."* → agent calls `accounts` with `# Account[]`.
-- *"Save my IONOS account andreas@ostermeyer.de as `ionos`."* → agent calls `accounts` with a `# Account { … }` upsert, and (if the keystore items don't yet exist) also offers you the two seed commands.
-- *"Drop the old work account."* → agent calls `accounts` with `#- Account { label: work }`. The keystore items themselves are not touched — drop those with your platform's CLI if you want them gone too.
+The `accounts` tool is **read-only** — it lets the agent see which labels exist, never their addresses:
+
+- *"Show me my configured mail accounts."* → agent calls `accounts` with `# Account[]` and gets back labels only (with `auth`/`broker-client`).
+- To add or change an account, edit `config.jmd` yourself (the agent can hand you a ready-to-paste block plus the keystore seed commands). There is no tool that writes the file — the username is personal data and must not flow through a tool call.
+
+If you used the earlier `accounts.jmd` registry, it is migrated into `config.jmd` automatically on first run.
 
 ## OAuth2 accounts (Microsoft, Gmail, …)
 
@@ -150,17 +164,7 @@ Providers that disabled Basic Auth require OAuth2. This server does **not** run 
 
 **One-time setup**
 
-1. Register the account as OAuth2 — `auth: oauth2` plus a `broker-client` (the jmd-mcp-oauth2 client name):
-
-   ```
-   # Account
-   label: outlook
-   imap_service: outlook.office365.com:993
-   smtp_service: smtp-mail.outlook.com:587
-   username: you@outlook.com
-   auth: oauth2
-   broker-client: outlook
-   ```
+1. Define the account in `config.jmd` with `auth: oauth2` and a `broker-client` (the jmd-mcp-oauth2 client name) — see *Account configuration* above for the field shape.
 
 2. Authorize the broker session once (device-code or browser login): in jmd-mcp-oauth2, `write` a `# OAuthSession { name: outlook }`.
 
@@ -176,15 +180,15 @@ Call an OAuth2 account without a token and the server replies with `oauth_token_
 
 ## Tools
 
-All four mail tools take `(service, username, document)`; the `accounts` tool takes just `(document)`.  All return a JMD document (data, query result, or `# Error`).
+All four mail tools take `(account, document)` — `account` is a label from `config.jmd`, which the server resolves to the IMAP/SMTP endpoint and login. The `accounts` tool takes just `(document)`. All return a JMD document (data, query result, or `# Error`).
 
 ### `read` — IMAP read and query
 
-`service` = IMAP endpoint.  Supports schema (`#! Folder`, `#! Message`), data reads (`# Folder[]`, `# Folder (path: …)`, `# Message (id: …, folder: …)`), and queries (`#? Folder`, `#? Message …`) with pagination (`page`, `page-size`, `count` frontmatter).
+`account` = a configured account label (IMAP side). Supports schema (`#! Folder`, `#! Message`), data reads (`# Folder[]`, `# Folder (path: …)`, `# Message (id: …, folder: …)`), and queries (`#? Folder`, `#? Message …`) with pagination (`page`, `page-size`, `count` frontmatter).
 
 ### `write` — IMAP write
 
-`service` = IMAP endpoint.
+`account` = a configured account label (IMAP side).
 
 - `# Folder { path: X }` — create a folder.
 - `rename-to: Y` frontmatter + `# Folder { path: X }` — rename.
@@ -193,7 +197,7 @@ All four mail tools take `(service, username, document)`; the `accounts` tool ta
 
 ### `delete` — IMAP delete
 
-`service` = IMAP endpoint.  Strict frontmatter (unknown keys are refused, not silently dropped — this is destructive).
+`account` = a configured account label (IMAP side).  Strict frontmatter (unknown keys are refused, not silently dropped — this is destructive).
 
 - `#- Message { id, folder }` — delete a single message.
 - `#- Message[]` array — bulk delete.
@@ -201,25 +205,24 @@ All four mail tools take `(service, username, document)`; the `accounts` tool ta
 
 ### `send` — SMTP send
 
-`service` = SMTP endpoint.  Body is a `# Message` with `to`, `subject`, `body` (Markdown).  Optional: `cc`, `bcc`, `## attachments[]`.
+`account` = a configured account label (SMTP side).  Body is a `# Message` with `to`, `subject`, `body` (Markdown).  Optional: `cc`, `bcc`, `## attachments[]`, `from-name` (overrides the account's default).
 
-### `accounts` — labelled-account registry
+### `accounts` — read-only account view
 
-Single tool that dispatches by JMD mode against the on-disk registry described in *Account registry* above:
+Read-only projection of `config.jmd` (see *Account configuration*):
 
 - `#! Account` — schema.
-- `# Account[]` — list all configured accounts (sorted by label).
-- `# Account { label, imap_service, smtp_service, username }` — upsert by label (insert or replace).
-- `#- Account { label }` — delete the account with `label`. Keystore items are *not* touched.
+- `# Account[]` — list configured accounts: `label` (plus `auth`, `broker-client`). Never the username or endpoints.
+- `# PublicKey` — this server's X25519 public key for the OAuth2 sealing flow.
 
-The registry stores **no passwords** — only the metadata. An upsert without matching keystore items is a valid intermediate state; the next read/send call will then return `credential_missing` with the seed command, which the agent will surface to you.
+There is **no write path**: a `# Account { … }` (upsert) or `#- Account` (delete) returns `config_readonly`. Add or change accounts by editing `config.jmd`.
 
 ## Examples
 
 Said to the agent, in natural language:
 
-- *"Set up my Gmail account andreas@example.com."* → agent offers the two seed commands.
-- *"List the folders in my INBOX."* → agent calls `read` with `# Folder[]`.
+- *"Set up my Gmail account andreas@example.com."* → agent offers a `config.jmd` block plus the two keystore seed commands to apply.
+- *"List the folders in my gmail account."* → agent calls `read` with `account: gmail` + `# Folder[]`.
 - *"Show me the 10 most recent mails."* → agent calls `read` with `page-size: 10` + `#? Message`.
 - *"Find unread mails from Alice in the last week."* → `#? Message` query with seen/from/since predicates.
 - *"Send a quick reply saying 'Got it, thanks.' to message 42 in INBOX."* → agent reads message 42 to get the sender, then calls `send`.
@@ -231,7 +234,9 @@ The server returns errors as JMD `# Error` documents with `status`, `code`, and 
 
 | Code | Status | Cause / fix |
 |---|---|---|
-| `credential_missing` | 401 | No keystore item for `(service, username)`.  The error message contains the exact seed command — the agent will offer it to you. |
+| `unknown_account` | 404 | No account with that label in `config.jmd`.  Add it out-of-band, or list labels via the `accounts` tool. |
+| `config_readonly` | 405 | A write/delete was attempted through the `accounts` tool.  Edit `config.jmd` instead. |
+| `credential_missing` | 401 | No keystore item for the account's `(service, username)`.  The error message contains the exact seed command — the agent will offer it to you. |
 | `oauth_token_required` | 401 | The account is `auth: oauth2` but no sealed token was supplied. Fetch one from the named `broker-client` (jmd-mcp-oauth2) and retry with an `access-token-sealed:` frontmatter key. |
 | `bad_sealed_token` | 400 | The `access-token-sealed` ciphertext could not be opened with this server's private key (wrong recipient key or corruption). Re-fetch a token sealed to the current `# PublicKey`. |
 | `keystore_unavailable` | 500 | The platform's keystore backend could not be reached. macOS: `/usr/bin/security` missing or returned an unexpected error. Linux: `secret-tool` missing (install `libsecret-tools`) or no Secret Service daemon running. Windows: `advapi32!CredReadW` failed with an unexpected error code. |
