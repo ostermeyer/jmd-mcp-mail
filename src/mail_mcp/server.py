@@ -15,7 +15,7 @@ import time
 
 from mcp.server.fastmcp import FastMCP
 
-from mail_mcp import _sealing, smtp
+from mail_mcp import _config, _sealing, smtp
 from mail_mcp import accounts as accounts_module
 from mail_mcp._credentials import (
     CredentialNotFoundError,
@@ -54,41 +54,56 @@ _KNOWN_FM_SEND: frozenset[str] = frozenset({
 _INSTRUCTIONS = (
     'This is JMD, not IMAP or SMTP.'
     ' Read "#! Folder" or "#! Message" to learn how.'
-    ' Accounts marked auth: oauth2 in the registry authenticate with a'
-    ' short-lived sealed access token from jmd-mcp-oauth2, passed as an'
-    ' access-token-sealed: frontmatter key (the read tool explains the'
-    ' steps); basic accounts use a keystore password as before.'
+    ' Address an account by its `account` label (configured out-of-band'
+    ' in config.jmd; list labels via the `accounts` tool). The server'
+    ' resolves endpoints/username internally. Accounts with auth: oauth2'
+    ' authenticate with a short-lived sealed access token from'
+    ' jmd-mcp-oauth2, passed as an access-token-sealed: frontmatter key;'
+    ' basic accounts use a keystore password.'
 )
 
 mcp = FastMCP("jmd-mcp-mail", instructions=_INSTRUCTIONS)
 
 
 def _resolve_info(
-    service: str, username: str, document: str,
+    account: str, document: str, *, smtp: bool = False,
 ) -> ConnectionInfo | str:
     """Resolve a connection for one call, or return a JMD ``# Error``.
 
-    If *document*'s frontmatter carries ``access-token-sealed``, the
-    sealed OAuth2 access token is opened with this server's private
-    key and the connection authenticates via XOAUTH2 — no keystore
-    password is read.  Otherwise the password is resolved from the OS
-    keystore (Basic Auth) as before.  A missing Basic-Auth credential
-    for a registered ``oauth2`` account returns a structured
-    ``oauth_token_required`` hint instead of ``credential_missing``.
+    The *account* label is looked up in ``config.jmd``; the server picks
+    the IMAP or SMTP endpoint (``smtp``), the username and the auth mode
+    from that record — none of which the LLM ever supplies or sees.
+
+    If the document's frontmatter carries ``access-token-sealed``, the
+    sealed OAuth2 token is opened with this server's private key and the
+    connection authenticates via XOAUTH2. An ``oauth2`` account called
+    without a sealed token returns ``oauth_token_required``. Otherwise the
+    password is resolved from the OS keystore (Basic Auth).
 
     Args:
-        service: Endpoint string (``host:port``).
-        username: Login identity.
+        account: The account label (config.jmd primary key).
         document: The JMD document for this call.
+        smtp: True for the SMTP endpoint (send), False for IMAP.
 
     Returns:
         Either a :class:`ConnectionInfo`, or a serialized JMD
         ``# Error`` document.  Callers should ``isinstance``-check.
     """
+    acct = _config.resolve(account)
+    if acct is None:
+        return _error(
+            404, "unknown_account",
+            f"No account {account!r} in config.jmd. Add it out-of-band "
+            "in the config directory (default ~/.jmd-mcp-mail/); list "
+            "configured labels via the `accounts` tool.",
+        )
+    service = acct.smtp if smtp else acct.imap
+
     try:
         fm = parse_frontmatter(document)
     except ValueError as exc:
         return _error(400, "bad_request", str(exc))
+
     sealed = fm.get("access-token-sealed")
     if sealed:
         try:
@@ -99,23 +114,27 @@ def _resolve_info(
                 f"could not open the sealed access token: {exc}",
             )
         try:
-            return ConnectionInfo.for_oauth(service, username, token)
+            return ConnectionInfo.for_oauth(
+                service, acct.username, token, from_name=acct.from_name,
+            )
         except ValueError as exc:
             return _error(400, "bad_request", str(exc))
+
+    if acct.auth == "oauth2":
+        return _error(
+            401, "oauth_token_required",
+            f"Account {acct.label!r} uses OAuth2. Fetch a sealed access "
+            f"token from broker client {acct.broker_client!r} (read its "
+            "'# OAuthToken' with this server's recipient-pubkey from "
+            "`accounts` '# PublicKey'), then retry with an "
+            "'access-token-sealed:' frontmatter key.",
+        )
+
     try:
-        return ConnectionInfo.resolve(service, username)
+        return ConnectionInfo.resolve(
+            service, acct.username, from_name=acct.from_name,
+        )
     except CredentialNotFoundError as exc:
-        acct = accounts_module.find_by_endpoint(service, username)
-        if acct is not None and acct.auth == "oauth2":
-            return _error(
-                401, "oauth_token_required",
-                f"Account {acct.label!r} uses OAuth2. Fetch a sealed "
-                f"access token from broker client "
-                f"{acct.broker_client!r}: read its '# OAuthToken' with "
-                "this server's recipient-pubkey (from `accounts` with "
-                "'# PublicKey'), then retry with an "
-                "'access-token-sealed:' frontmatter key.",
-            )
         return _error(401, "credential_missing", str(exc))
     except KeystoreUnavailableError as exc:
         return _error(500, "keystore_unavailable", str(exc))
@@ -124,13 +143,13 @@ def _resolve_info(
 
 
 @mcp.tool()
-async def read(service: str, username: str, document: str) -> str:
+async def read(account: str, document: str) -> str:
     """Read IMAP resources using a JMD document (https://github.com/ostermeyer/jmd-spec).
 
     Args:
-        service: IMAP endpoint as 'host:port' (e.g.
-            'imap.gmail.com:993' for IMAPS).
-        username: IMAP login.
+        account: Account label configured out-of-band in config.jmd.
+            The server resolves the IMAP endpoint and username from it;
+            you never pass or see them. List labels via `accounts`.
         document: JMD read/query/schema document.
 
     Supported labels: Folder, Folder[], Message.
@@ -236,7 +255,7 @@ async def read(service: str, username: str, document: str) -> str:
         Calling an oauth2 account without a sealed token returns
         ``oauth_token_required``, naming the broker-client and steps.
     """
-    info = _resolve_info(service, username, document)
+    info = _resolve_info(account, document)
     if isinstance(info, str):
         return info
     try:
@@ -259,12 +278,12 @@ async def read(service: str, username: str, document: str) -> str:
 
 
 @mcp.tool()
-async def write(service: str, username: str, document: str) -> str:
+async def write(account: str, document: str) -> str:
     r"""Write to IMAP using a JMD document (https://github.com/ostermeyer/jmd-spec).
 
     Args:
-        service: IMAP endpoint as 'host:port'.
-        username: IMAP login.
+        account: Account label configured out-of-band in config.jmd
+            (server resolves the IMAP endpoint and username).
         document: JMD data document (# Folder or # Message).
 
     Folder — create:
@@ -301,7 +320,7 @@ async def write(service: str, username: str, document: str) -> str:
     echoed in the response as 'ignored-keys: ...'.
     Debug frontmatter: 'debug: timing' (composable).
     """
-    info = _resolve_info(service, username, document)
+    info = _resolve_info(account, document)
     if isinstance(info, str):
         return info
     try:
@@ -324,12 +343,12 @@ async def write(service: str, username: str, document: str) -> str:
 
 
 @mcp.tool()
-async def delete(service: str, username: str, document: str) -> str:
+async def delete(account: str, document: str) -> str:
     r"""Delete an IMAP resource using a JMD delete document (https://github.com/ostermeyer/jmd-spec).
 
     Args:
-        service: IMAP endpoint as 'host:port'.
-        username: IMAP login.
+        account: Account label configured out-of-band in config.jmd
+            (server resolves the IMAP endpoint and username).
         document: JMD delete document (#- Folder, #- Message,
             or #- Message[]).
 
@@ -359,7 +378,7 @@ async def delete(service: str, username: str, document: str) -> str:
     structured error (destructive operation, no silent drops).
     Debug frontmatter: 'debug: timing' (composable).
     """
-    info = _resolve_info(service, username, document)
+    info = _resolve_info(account, document)
     if isinstance(info, str):
         return info
     try:
@@ -383,15 +402,12 @@ async def delete(service: str, username: str, document: str) -> str:
 
 
 @mcp.tool()
-def send(service: str, username: str, document: str) -> str:
+def send(account: str, document: str) -> str:
     """Send an email via SMTP using a JMD Message document (https://github.com/ostermeyer/jmd-spec).
 
     Args:
-        service: SMTP endpoint as 'host:port' (e.g.
-            'smtp.gmail.com:587' for STARTTLS submission,
-            'smtp.gmail.com:465' for implicit TLS).
-        username: SMTP login.  Usually the sender's full email
-            address.
+        account: Account label configured out-of-band in config.jmd
+            (server resolves the SMTP endpoint and sender username).
         document: JMD Message document.
 
     Required fields in *document*: to, subject, body (Markdown).
@@ -430,7 +446,7 @@ def send(service: str, username: str, document: str) -> str:
         )
         dbg = parse_debug(fm)
         t0 = time.perf_counter()
-        info = _resolve_info(service, username, document)
+        info = _resolve_info(account, document, smtp=True)
         if isinstance(info, str):
             return info
         result = smtp.send(document, info)
@@ -448,73 +464,29 @@ def send(service: str, username: str, document: str) -> str:
 
 @mcp.tool()
 def accounts(document: str) -> str:
-    r"""Manage the local Account registry via a JMD document (https://github.com/ostermeyer/jmd-spec).
+    r"""List configured accounts (READ-ONLY) via a JMD document (https://github.com/ostermeyer/jmd-spec).
 
-    Args:
-        document: JMD document selecting the operation (see below).
-
-    The registry is a flat list of labelled ``(imap_service,
-    smtp_service, username)`` triples stored under
-    ``%APPDATA%\\jmd-mcp-mail\\accounts.jmd`` (Windows),
-    ``~/Library/Application Support/jmd-mcp-mail/accounts.jmd``
-    (macOS) or ``$XDG_CONFIG_HOME/jmd-mcp-mail/accounts.jmd``
-    (Linux).  **No passwords** are stored here — only the metadata
-    needed to construct the ``(service, username)`` keystore lookup
-    at tool-call time.
+    Accounts are authored out-of-band in ``config.jmd`` (config
+    directory, default ``~/.jmd-mcp-mail/``). This tool **cannot** create
+    or change them — there is no write path (the username is personal
+    data and must not flow through a tool call).
 
     Supported document forms:
 
-        #! Account                                  (schema)
+        #! Account        (schema of a config.jmd account)
+        # Account[]       (list accounts: label, auth, broker-client)
+        # PublicKey       (this server's X25519 key for OAuth2 sealing)
 
-        # Account[]                                 (list all)
+    Only ``label`` / ``auth`` / ``broker-client`` are returned — never
+    username or endpoints. A write/delete attempt returns
+    ``config_readonly``.
 
-        # Account                                   (upsert by label)
-        label: ionos
-        imap_service: imap.ionos.de:993
-        smtp_service: smtp.ionos.de:587
-        username: andreas@ostermeyer.de
-
-        #- Account                                  (delete by label)
-        label: ionos
-
-    Typical workflow:
-
-      1. **List** with ``# Account[]`` to see what the user has
-         configured.  Pick one for read / send.
-      2. **Upsert** with ``# Account { ... }`` when the user adds a
-         new account.  *Also* offer the user the keystore seed
-         commands (see the `read` tool docstring) — the registry
-         carries no password, so without those two keystore items
-         the account cannot authenticate.
-      3. **Delete** with ``#- Account { label }`` when the user
-         retires an account.  This does NOT delete the keystore
-         items; the user can drop those separately with their
-         platform's keystore CLI.
-
-    The registry is a convenience layer for *labels and endpoints*;
-    the source of truth for "can this account authenticate?" is the
-    OS keystore.  An upsert without matching keystore items is a
-    valid intermediate state (and the user will hit
-    ``credential_missing`` on the first real call, which carries the
-    seed command).
-
-    OAuth2 accounts:
-        Set ``auth: oauth2`` and a ``broker-client`` (the
-        jmd-mcp-oauth2 client name) on the account instead of seeding
-        a keystore password.  Read this server's public key with the
-        ``# PublicKey`` form below; the `read`/`send` tools explain
-        how the agent fetches a sealed token from the broker and
-        passes it as an ``access-token-sealed:`` frontmatter key.
-
-        # Account                                   (oauth2 upsert)
-        label: outlook
-        imap_service: outlook.office365.com:993
-        smtp_service: smtp-mail.outlook.com:587
-        username: you@outlook.com
-        auth: oauth2
-        broker-client: outlook
-
-        # PublicKey                                 (this server's key)
+    Onboarding a new account: show the user a ``config.jmd`` ``# Account``
+    block to add, plus (for basic auth) the keystore seed command; they
+    apply both out-of-band. Mainstream endpoints: gmail.com →
+    imap.gmail.com:993 + smtp.gmail.com:587 (App Password), outlook/365 →
+    outlook.office365.com:993 + smtp-mail.outlook.com:587 (oauth2),
+    ionos.de → imap.ionos.de:993 + smtp.ionos.de:587.
     """
     try:
         return accounts_module.handle(document)

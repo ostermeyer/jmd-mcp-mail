@@ -3,9 +3,26 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import keyring
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Point the config dir (and legacy path) at a throwaway location.
+
+    Protects every test from touching the real ``~/.jmd-mcp-mail`` and
+    neutralises the best-effort legacy migration (the legacy path points
+    at a non-existent temp file).
+    """
+    monkeypatch.setenv("JMD_MCP_MAIL_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv(
+        "JMD_MCP_MAIL_ACCOUNTS_PATH", str(tmp_path / "legacy-absent.jmd"),
+    )
 
 
 @pytest.fixture

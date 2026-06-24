@@ -67,7 +67,8 @@ def send(document: str, info: ConnectionInfo) -> str:
     body = str(fields.get("body", "")).strip()
     cc_raw = str(fields.get("cc", "")).strip()
     bcc_raw = str(fields.get("bcc", "")).strip()
-    from_name = str(fields.get("from-name", "")).strip()
+    # Per-call from-name overrides the account default (info.from_name).
+    from_name = str(fields.get("from-name", "")).strip() or info.from_name
     attachments_raw = fields.get("attachments", [])
 
     if not to_raw:
