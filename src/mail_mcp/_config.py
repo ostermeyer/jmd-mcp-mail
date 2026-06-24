@@ -133,11 +133,12 @@ def load() -> list[Account]:
         OSError: On I/O failures.
     """
     path = config_file()
-    if not path.exists():
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    if not text.strip():
+        # Absent *or* empty (a pre-created blank file) → attempt the
+        # one-time migration from a legacy accounts.jmd, then re-read.
         _migrate_legacy(path)
-    if not path.exists():
-        return []
-    text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
     if not text.strip():
         return []
     try:

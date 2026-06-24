@@ -137,3 +137,26 @@ def test_migration_from_legacy(
     assert len(accounts) == 1
     assert accounts[0].imap == "imap.ionos.de:993"
     assert _config.config_file().exists()
+
+
+def test_migration_when_config_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A pre-created blank config.jmd still triggers legacy migration."""
+    legacy = tmp_path / "legacy.jmd"
+    legacy.write_text(
+        "# Account[]\n"
+        "- label: ionos\n"
+        "  imap_service: imap.ionos.de:993\n"
+        "  smtp_service: smtp.ionos.de:587\n"
+        "  username: a@b.de\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JMD_MCP_MAIL_ACCOUNTS_PATH", str(legacy))
+    # Pre-create an empty config.jmd (the footgun we hardened against).
+    blank = _config.config_file()
+    blank.parent.mkdir(parents=True, exist_ok=True)
+    blank.write_text("", encoding="utf-8")
+    accounts = _config.load()
+    assert len(accounts) == 1
+    assert accounts[0].label == "ionos"
