@@ -114,13 +114,17 @@ nach Adressen durchsuchen und ersetzen; dabei die In-Memory-Rückwärts-Map bef�
 
 ---
 
-## 7. Per-Account-Schalter
+## 7. Per-Account-Schalter (config.jmd, out-of-reach)
 
-- **Default AN** (Privacy by Default, Art. 25 Abs. 2), pro Account abschaltbar.
-- Neues Feld in der Account-Registry, z. B. `pseudonymize: true|false` (Default
-  `true`) sowie `pseudonymize_domain: true|false` (Default `false`, opt-in).
-  Eingriffspunkt: [`src/mail_mcp/accounts.py`](../src/mail_mcp/accounts.py)
-  (`Account`-Dataclass + Validierung + `as_jmd_dict`).
+- **Default AN** (Privacy by Default, Art. 25 Abs. 2), pro Account abschaltbar —
+  ausschließlich in der out-of-reach `config.jmd`, **nicht** per Frontmatter
+  (sonst könnte ein LLM-gesetztes Flag den Schutz abschwächen).
+- Felder pro Account: `pseudonymize` (Default `true`), `pseudonymize-domain`
+  (Default `false`, opt-in) und **`mask-content`** (Default `true`) — Letzteres
+  steuert die Inhalts-Maskierung (Server/IP/Telefon/Host:Port; MTT-Regelset).
+  Eingriffspunkt: [`src/mail_mcp/_config.py`](../src/mail_mcp/_config.py)
+  (`Account`-Dataclass), durchgereicht über `ConnectionInfo` in
+  [`server.py`](../src/mail_mcp/server.py).
 
 ---
 
@@ -168,7 +172,7 @@ den Kontext — das ist bei einer ausdrücklich nutzerinitiierten Aktion akzepti
 | `src/mail_mcp/imap/read.py` | Einbindung im Read-Pfad |
 | `src/mail_mcp/smtp.py` | Eingehende Auflösung (Empfänger, `from-name`), Bestätigung |
 | `src/mail_mcp/imap/_criteria.py` | Eingehende Auflösung (Suchprädikate) |
-| `src/mail_mcp/accounts.py` | Per-Account-Schalter (Default an) |
+| `src/mail_mcp/_config.py` | Per-Account-Schalter `pseudonymize`/`mask-content` (config.jmd, Default an) |
 
 ---
 
@@ -180,26 +184,26 @@ echte Adresse je in den LLM-Kontext gelangt. Konzeptionell ein **persistent
 gepflegter Seed für dieselbe In-Memory-Rückwärts-Map** wie die Lese-Pseudonyme:
 gleicher HMAC-Token ⇒ konsistente Identität, egal ob aus gelesener Mail oder Import.
 
-### 12.1 Quellen (nur Pfade, nie Inhalte über die Tool-Grenze)
+### 12.1 Quelle (Auto-Discovery im Config-Verzeichnis)
 
-- **Primär:** wiederholbares CLI-Argument am Entrypoint (`--contacts <pfad>`),
-  gesetzt in der MCP-Server-Konfiguration (`args` im mcpServers-Block).
-- **Alternativ:** eine Umgebungsvariable (`JMD_MCP_MAIL_CONTACT_SOURCES`,
-  pfadgetrennte Liste) — unabhängig davon, wie/woher sie gesetzt wird (kein
-  dotenv-Parsing serverseitig, schlicht `os.environ`).
-- Ein Pfad ist kein PII; die Dateien liegen außerhalb des Servers
-  (Nutzer-Verantwortung) und werden serverseitig gelesen.
+- Jede **`*.vcf`** im **Config-Verzeichnis** (`~/.jmd-mcp-mail/`, Env-Override
+  `JMD_MCP_MAIL_HOME`) wird automatisch importiert — **keine** explizite
+  Konfiguration, keine CLI-Args/Env-Liste. `.vcf` reinlegen genügt.
+- Die Dateien liegen out-of-reach (Nutzer-Verantwortung) und werden
+  serverseitig gelesen; über die Tool-Grenze läuft nichts.
 
-### 12.2 Formate
+### 12.2 Format
 
-- **vCard** (`.vcf`) via `vobject` — primär (Apple/Google/Outlook/Thunderbird).
-- **CSV** via stdlib `csv` mit tolerantem Spalten-Mapping (Outlook-/Google-Header).
+- **vCard** (`.vcf`) via `vobject` (Apple/Google/Outlook/Thunderbird).
+- **CSV ist bewusst nicht unterstützt** — kein kanonisches Schema über Clients
+  hinweg; exportiere vCard (ggf. einmal konvertieren).
 
 ### 12.3 Speicherung & Lebenszyklus
 
 - **Strikt in-memory**, kein `contacts.jmd`, nichts at rest. Die einzigen
   PII-Dateien sind die nutzereigenen Exporte.
-- Startup parst alle Quellen → In-Memory. `reimport` lädt sie zur Laufzeit neu.
+- Startup scannt das Config-Verzeichnis nach `*.vcf` → In-Memory. `reimport`
+  scannt zur Laufzeit neu.
 
 ### 12.4 Label-Ableitung — Form `<Namensteil> <key>`
 
@@ -219,25 +223,25 @@ Beispiele: `Rebecca <k7f2a9>`, `Rebecca Sch. <k7f2a9>`,
 
 ### 12.5 Tool-Oberfläche
 
-- Eigenes **`contacts`**-Tool: `# Contacts { reimport }` → `# Contacts[]` mit
-  `(label, token)`.
-- **Rückgabe-Invariante:** nur `count` + `(label, token)`; **niemals** Adressen oder
-  Roh-Inhalt — unabhängig vom Pfad. Damit ist auch ein vom LLM frei genannter oder
-  halluzinierter Pfad harmlos (es kommt keine Adresse zurück).
+- Eigenes **`contacts`**-Tool: `# Contacts[]` listet die Einträge; `# Contacts {
+  reimport: true }` scannt das Config-Verzeichnis neu und liefert zusätzlich einen
+  **Per-Datei-Report** (`## files[]`: name/status/contacts) plus die Einträge.
+- **Rückgabe-Invariante:** nur `(label, token)` (+ Datei-Report mit Name/Status/
+  Anzahl); **niemals** Adressen oder Roh-Inhalt.
 
 ### 12.6 Auflösung beim Senden / Suchen
 
 - `send` löst `to`/`cc`/`bcc` per **Label *oder* Token** → echte Adresse
   (serverseitig, nie im Kontext). Unbekannt → `unknown_pseudonym` (Containment).
-- Der **Lese-Pfad** reichert den Namensteil aus den Kontakten an
-  (`Rebecca Sch. <key>` statt `Rebecca <key>`), wenn die Adresse bekannt ist —
-  gleicher `<key>`, gleiche Identität.
+- *Optional, noch nicht umgesetzt:* der Lese-Pfad könnte den Namensteil aus den
+  Kontakten anreichern (`Rebecca Sch. <key>` statt `Rebecca <key>`) — gleicher
+  `<key>`, gleiche Identität.
 
 ### 12.7 Betroffene Dateien
 
 | Datei | Rolle |
 |---|---|
-| `src/mail_mcp/_contacts.py` *(neu)* | Quellen-Discovery (args/env), vCard/CSV-Parser, Label-Ableitung, Seed der In-Memory-Map |
+| `src/mail_mcp/_contacts.py` *(neu)* | Auto-Discovery der `*.vcf` im Config-Verzeichnis, vCard-Parser, Label-Ableitung, Seed der In-Memory-Map, Per-Datei-Report |
 | `src/mail_mcp/_pseudonym.py` | gemeinsame Token-Erzeugung + Rückwärts-Map (von Kontakten mitgenutzt) |
 | `src/mail_mcp/server.py` | `contacts`-Tool + Startup-Import; Label-Anreicherung im Read-Pfad |
 | `src/mail_mcp/smtp.py` / `imap/_criteria.py` | Auflösung per Label (zusätzlich zum Token) |

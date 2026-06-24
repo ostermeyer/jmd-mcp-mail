@@ -8,6 +8,7 @@ An MCP server that lets an LLM agent (Claude Desktop, Claude Code, …) work wit
 ## What's special
 
 - **Label addressing, out-of-band config.** Accounts live in one out-of-reach config file (`config.jmd`) that you author directly. Each tool call carries just an `account` label; the server resolves the endpoints and login internally, so your email address and the endpoints never enter the LLM context.
+- **GDPR data minimisation (read path).** Email identities are pseudonymised (`Alice <a1b2c3>`) and content identifiers (servers/IPs/phone numbers) masked before they reach the LLM — on by default, governed per account out-of-reach. See *Privacy* below.
 - **Credentials never enter the LLM context.** Passwords live in the OS keystore (macOS Keychain, Windows Credential Manager, Linux Secret Service). The server reads them via the platform's keystore CLI in its own process and uses them in IMAP/SMTP handshakes — they're never returned in any tool output, never logged.
 - **Seeding stays out-of-band.** New keystore items are created by the user in their own terminal via a copy-paste shell command. The password is typed into the keystore CLI's tty-interactive prompt and never traverses any tool call.
 - **JMD-native I/O.** Tool inputs and outputs are JMD documents (Markdown-shaped, LLM-friendly). Mail bodies round-trip Markdown ↔ HTML transparently.
@@ -143,6 +144,8 @@ Accounts are defined in **one commented JMD file you author directly**. The LLM 
   smtp: smtp.ionos.de:587
   username: andreas@ostermeyer.de
   from-name: Andreas Ostermeyer    # optional From-header display name
+  # pseudonymize: true            # GDPR: tokenise identities (default true)
+  # mask-content: true            # GDPR: mask servers/IPs/phones (default true)
 - label: outlook
   imap: outlook.office365.com:993
   smtp: smtp-mail.outlook.com:587
@@ -157,6 +160,19 @@ The `accounts` tool is **read-only** — it lets the agent see which labels exis
 - To add or change an account, edit `config.jmd` yourself (the agent can hand you a ready-to-paste block plus the keystore seed commands). There is no tool that writes the file — the username is personal data and must not flow through a tool call.
 
 If you used the earlier `accounts.jmd` registry, it is migrated into `config.jmd` automatically on first run.
+
+## Privacy — pseudonymisation & masking (DSGVO)
+
+This build minimises personal data **before it reaches the LLM**. Two layers, both governed **per account in `config.jmd`** (out-of-reach — never via a tool call, so a prompt-injected instruction cannot weaken them):
+
+- **Identity pseudonymisation** (`pseudonymize`, default on). On read, email addresses and display names become a stable, one-way token — e.g. `Alice <a1b2c3>`. The real address never enters the context; `send` and search accept the token and the server resolves it back. Opt out per account with `pseudonymize: false`; `pseudonymize-domain: true` additionally preserves "same company" relationships.
+- **Content masking** (`mask-content`, default on). On read, content-layer identifiers in subject/body — servers/FQDNs, IPs, phone numbers, `host:port` — are replaced with `[server]` / `[ip]` / `[telefon]` / `[port]`. Opt out per account with `mask-content: false`.
+
+Both are **data minimisation / defense-in-depth** (GDPR Art. 5/25). They do not by themselves provide the legal basis for the LLM transfer — that rests on a DPA + transfer mechanism (see `docs/`). Disabling either is a deliberate, out-of-band `config.jmd` edit; the agent cannot turn them off.
+
+### Address book (contacts)
+
+Drop vCard (`.vcf`) exports into the config directory (`~/.jmd-mcp-mail/`) and they are imported automatically — so you can address people you have never mailed (by pseudonym) without their real address entering the context. The `contacts` tool lists `(label, token)` and re-scans on `reimport`; it never returns an address. CSV is unsupported — export vCard.
 
 ## OAuth2 accounts (Microsoft, Gmail, …)
 
@@ -216,6 +232,16 @@ Read-only projection of `config.jmd` (see *Account configuration*):
 - `# PublicKey` — this server's X25519 public key for the OAuth2 sealing flow.
 
 There is **no write path**: a `# Account { … }` (upsert) or `#- Account` (delete) returns `config_readonly`. Add or change accounts by editing `config.jmd`.
+
+### `contacts` — address book (read-only)
+
+In-memory address book seeded from `*.vcf` files in the config directory (see *Address book*):
+
+- `#! Contacts` — schema.
+- `# Contacts[]` — list entries as `(label, token)`. Never an address.
+- `# Contacts { reimport: true }` — re-scan the config dir; returns the entries plus a per-file report (`## files[]`: name/status/contacts).
+
+Adding contacts is out-of-band (drop a `.vcf`, then `reimport`); there is no tool that writes them.
 
 ## Examples
 
