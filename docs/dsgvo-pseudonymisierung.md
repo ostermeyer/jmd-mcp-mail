@@ -81,7 +81,13 @@ Form im Transkript: **`Vorname <key>`**, z. B. `Alice <a1b2c3>`.
 
 ## 5. Persistenz & Auflösung
 
-- **Keine** Mapping-Tabelle at rest. Persistiert wird **nur** das Secret (Keystore).
+- **Keine persistente Mapping-Tabelle treibt die Auflösung.** Persistiert wird für
+  die Auflösung **nur** das Secret (Keystore); Token→Adresse läuft ausschließlich
+  über die In-Memory-Map (s. u.).
+- *(Einzige Tabelle at rest — rein menschenlesbar, **keine** Datenquelle für die
+  Auflösung:)* der Server schreibt ein **Session-Transkript** `contacts.md` (der
+  Re-ID-Schlüssel) ins Config-Verzeichnis. Es spiegelt nur die **laufende Session**
+  und wird an den Session-Grenzen **gelöscht** — Details in §12.3.
 - **Vorwärts** (echt → Pseudonym): on-the-fly beim Rendern.
 - **Rückwärts** (Pseudonym → echt): **In-Memory-Map**, beim Lesen befüllt. Für einen
   Token, den der Server diese Session noch nicht gesehen hat, wird die Map durch
@@ -180,9 +186,10 @@ den Kontext — das ist bei einer ausdrücklich nutzerinitiierten Aktion akzepti
 
 Ermöglicht das Adressieren von Personen, deren Mail man (noch) nicht gelesen hat —
 z. B. weil das Konto serverseitig für den MCP-Server gesperrt ist —, ohne dass deren
-echte Adresse je in den LLM-Kontext gelangt. Konzeptionell ein **persistent
-gepflegter Seed für dieselbe In-Memory-Rückwärts-Map** wie die Lese-Pseudonyme:
-gleicher HMAC-Token ⇒ konsistente Identität, egal ob aus gelesener Mail oder Import.
+echte Adresse je in den LLM-Kontext gelangt. Konzeptionell ein **Seed für dieselbe
+In-Memory-Rückwärts-Map** wie die Lese-Pseudonyme — bei jedem Serverstart aus den
+Import-Dateien neu aufgebaut, nicht aus einer persistierten Tabelle: gleicher
+HMAC-Token ⇒ konsistente Identität, egal ob aus gelesener Mail oder Import.
 
 ### 12.1 Quelle (Auto-Discovery im Config-Verzeichnis)
 
@@ -195,15 +202,41 @@ gleicher HMAC-Token ⇒ konsistente Identität, egal ob aus gelesener Mail oder 
 ### 12.2 Format
 
 - **vCard** (`.vcf`) via `vobject` (Apple/Google/Outlook/Thunderbird).
+- **Outlook-PST** (`.pst`) via **`libpff` (Python-Binding `pypff`)** — für das
+  *neue* Outlook, das Kontakte praktisch nur noch als PST exportiert. Der Parser
+  läuft über die Kontakt-Ordner (`IPM.Contact`), nimmt den Namen aus den festen
+  MAPI-Tags und erntet Adressen wertbasiert; Provenienz-Adressen (Creator/
+  LastModifier des Exporteurs) werden übersprungen, damit sie nicht fälschlich
+  einem Kontakt zugeordnet werden.
+  - **Abhängigkeit bewusst optional:** `pypff` ist **keine** Projekt-Dependency.
+    Der Server prüft zur Laufzeit nur ihr Vorhandensein; fehlt sie, werden `.pst`
+    übersprungen (Status `skipped`, nie fatal) — `.vcf` funktioniert unabhängig.
+    **Installation: `pip install libpff-python`** (NICHT `pypff` — das ist ein
+    fremdes Astronomie-Paket; das Binding importiert sich aber *als* `pypff`).
 - **CSV ist bewusst nicht unterstützt** — kein kanonisches Schema über Clients
   hinweg; exportiere vCard (ggf. einmal konvertieren).
 
 ### 12.3 Speicherung & Lebenszyklus
 
-- **Strikt in-memory**, kein `contacts.jmd`, nichts at rest. Die einzigen
-  PII-Dateien sind die nutzereigenen Exporte.
-- Startup scannt das Config-Verzeichnis nach `*.vcf` → In-Memory. `reimport`
-  scannt zur Laufzeit neu.
+- Das **Adressbuch ist strikt in-memory**, kein `contacts.jmd`. Die nutzereigenen
+  Exporte (`*.vcf`/`*.pst`) sind die einzigen PII-Eingabedateien.
+- Startup scannt das Config-Verzeichnis nach `*.vcf`/`*.pst` → In-Memory.
+  `reimport` scannt zur Laufzeit neu.
+- **`contacts.md` — das Re-ID-Transkript (Modell A: Single-Session).** Parallel zum
+  Import schreibt der Server eine menschenlesbare Tabelle `Token ↔ Name+Adresse` ins
+  Config-Verzeichnis, damit der Nutzer ein im Chat gesehenes Pseudonym selbst
+  zurückauflösen kann. Eigenschaften:
+  - **Transkript der laufenden Session, keine Datenquelle.** `sync()` schreibt die
+    Datei aus den In-Memory-Zeilen neu (Overwrite, **kein** Merge mit einer
+    Altdatei). Sie spiegelt damit exakt den Live-Stand und behauptet nie ein
+    Mapping, das der Server nicht (mehr) auflösen könnte.
+  - **An Session-Grenzen gelöscht.** `purge()` entfernt die Datei beim **Startup**
+    (bevor irgendetwas geschrieben wird) und best-effort beim **Shutdown**
+    (`try/finally` um `mcp.run()` plus `SIGTERM`/`SIGINT`-Handler). Ein harter Kill
+    (`SIGKILL`, Stromausfall) lässt sich nicht abfangen — der nächste Startup-Purge
+    räumt dann auf, bevor ein Token geschrieben wird.
+  - **Re-Identifikationsschlüssel — privat halten.** Die Datei enthält echte
+    Adressen; sie wird nur vom Server geschrieben und von **keinem** Tool gelesen.
 
 ### 12.4 Label-Ableitung — Form `<Namensteil> <key>`
 
@@ -241,9 +274,10 @@ Beispiele: `Rebecca <k7f2a9>`, `Rebecca Sch. <k7f2a9>`,
 
 | Datei | Rolle |
 |---|---|
-| `src/mail_mcp/_contacts.py` *(neu)* | Auto-Discovery der `*.vcf` im Config-Verzeichnis, vCard-Parser, Label-Ableitung, Seed der In-Memory-Map, Per-Datei-Report |
-| `src/mail_mcp/_pseudonym.py` | gemeinsame Token-Erzeugung + Rückwärts-Map (von Kontakten mitgenutzt) |
-| `src/mail_mcp/server.py` | `contacts`-Tool + Startup-Import; Label-Anreicherung im Read-Pfad |
+| `src/mail_mcp/_contacts.py` *(neu)* | Auto-Discovery der `*.vcf`/`*.pst` im Config-Verzeichnis, vCard- + PST-Parser, Label-Ableitung, Seed der In-Memory-Map, Per-Datei-Report |
+| `src/mail_mcp/_transcript.py` *(neu)* | `contacts.md`-Session-Transkript: Overwrite-`sync()` aus den In-Memory-Zeilen, `purge()` an den Session-Grenzen |
+| `src/mail_mcp/_pseudonym.py` | gemeinsame Token-Erzeugung + Rückwärts-Map (von Kontakten mitgenutzt), Transkript-Zeilen |
+| `src/mail_mcp/server.py` | `contacts`-Tool + Startup-Import; Startup/Shutdown-`purge()`; Label-Anreicherung im Read-Pfad |
 | `src/mail_mcp/smtp.py` / `imap/_criteria.py` | Auflösung per Label (zusätzlich zum Token) |
 
 ---

@@ -40,6 +40,22 @@ pipx install git+https://github.com/ostermeyer/jmd-mcp-mail.git
 
 Either way you get a `jmd-mcp-mail` executable on `PATH`.
 
+### Optional: Outlook PST contact import (`libpff-python`)
+
+Importing Outlook `.pst` contact exports (see *Address book*) needs the `libpff`
+Python binding. It is **deliberately not a dependency** — the server checks for it
+at runtime and silently skips `.pst` files if it is absent (`.vcf` import is
+unaffected). Install it yourself only if you need PST import:
+
+```sh
+pip install libpff-python
+```
+
+> **Install `libpff-python`, not `pypff`.** The PyPI package named `pypff` is an
+> unrelated astronomy project. The correct binding is published as `libpff-python`
+> but imports *as* `pypff`. On Windows it builds from source (a C toolchain and a
+> minute or two are required).
+
 ## Configure your MCP host
 
 ### Claude Desktop
@@ -173,6 +189,10 @@ Both are **data minimisation / defense-in-depth** (GDPR Art. 5/25). They do not 
 ### Address book (contacts)
 
 Drop vCard (`.vcf`) exports into the config directory (`~/.jmd-mcp-mail/`) and they are imported automatically — so you can address people you have never mailed (by pseudonym) without their real address entering the context. The `contacts` tool lists `(label, token)` and re-scans on `reimport`; it never returns an address. CSV is unsupported — export vCard.
+
+Outlook `.pst` contact exports are also imported (the new Outlook exports contacts almost only as PST). This needs the optional `libpff-python` binding — see *Optional: Outlook PST contact import* under *Install*; without it, `.pst` files are skipped and `.vcf` still works.
+
+The server also writes a **re-identification transcript** `contacts.md` into the config directory: a private `token ↔ name + address` table so you can resolve a pseudonym you saw in chat back to the real person. It is a **transcript of the current session only** — rewritten from live state (never merged with an old file) and **deleted at startup and shutdown**, so the key never lingers between sessions. Keep it private; no tool ever reads it.
 
 ## OAuth2 accounts (Microsoft, Gmail, …)
 

@@ -22,8 +22,11 @@ Richtung LLM.
 - **Env-Override** für das *Verzeichnis*: `JMD_MCP_MAIL_HOME` (ein Pfad — keine PII).
 - **Inhalt per Konvention** (kein Listing nötig):
   - `config.jmd` — Accounts (+ später DSGVO-Keys).
-  - `*.vcf` (top-level) — **reserviert für den `dsgvo`-Teil** (Kontakt-Auto-Import);
-    `main` legt das Verzeichnis nur an.
+  - `*.vcf` / `*.pst` (top-level) — **reserviert für den `dsgvo`-Teil**
+    (Kontakt-Auto-Import; `.pst` nur mit optionalem `libpff-python`); `main` legt
+    das Verzeichnis nur an.
+  - `contacts.md` (nur `dsgvo`) — Re-ID-Transkript der **laufenden** Session,
+    serverseitig geschrieben und an den Session-Grenzen gelöscht; **privat halten**.
 - **Sensibel, nicht geheim**: enthält `username` (personenbezogen; später
   Scoping-Adressen). Restriktive Verzeichnis-/Dateirechte empfohlen. **Keine
   Geheimnisse** — Passwörter/Tokens/Keys bleiben im **OS-Keyring**.
