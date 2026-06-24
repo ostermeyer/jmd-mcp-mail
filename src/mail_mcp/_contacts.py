@@ -198,6 +198,13 @@ def _parse_pst(path: Path, source: str) -> list[_RawEntry]:
                 given = display[0] if display else ""
             seen: set[str] = set()
             for entry in es:
+                # 0x5D00–0x5DFF are item-provenance SMTP addresses
+                # (creator / last-modifier / sender / representing /
+                # received) — NOT the contact's own address. Harvesting
+                # them mis-attributes e.g. the exporter's own address to
+                # every card. Skip the whole range.
+                if 0x5D00 <= entry.entry_type <= 0x5DFF:
+                    continue
                 try:
                     val = (entry.get_data_as_string() or "").strip()
                 except Exception:  # noqa: BLE001 — non-string entry
