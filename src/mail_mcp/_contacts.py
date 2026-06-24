@@ -1,23 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
-"""DSGVO-konformer Kontakt-Import (Adressbuch) — strictly in-memory.
+"""DSGVO contact address book — vCard auto-discovery, strictly in-memory.
 
-Seeds the pseudonym reverse-map from address-book exports (vCard / CSV) so
-the agent can address people it has never exchanged mail with — e.g. when
-the mailbox itself is locked — without their real address ever entering the
-LLM context.
+Seeds the pseudonym reverse-map from vCard exports so the agent can address
+people it has never exchanged mail with — e.g. when the mailbox itself is
+locked — without their real address ever entering the LLM context.
 
-Sources are file PATHS only (never contents over a tool boundary):
-
-* **primary:** ``--contacts <path>`` CLI args on the server entrypoint,
-* **alternative:** the ``JMD_MCP_MAIL_CONTACT_SOURCES`` environment variable
-  (an ``os.pathsep``-separated list), however it happens to be set.
+**Sources:** every ``*.vcf`` file in the config directory (default
+``~/.jmd-mcp-mail/``; override via ``JMD_MCP_MAIL_HOME``). Drop a vCard export
+there and it is imported at startup and on ``reimport`` — no explicit
+configuration. CSV is intentionally unsupported (no canonical schema across
+clients); export vCard instead.
 
 Nothing is persisted. Parsing seeds the in-process reverse-map in
 :mod:`mail_mcp._pseudonym` (token → real address) and keeps a list of
-``(label, token)`` for the ``contacts`` tool. Real addresses live only in
-that in-memory map and are never returned anywhere.
+``(label, token)`` plus a per-file report. Real addresses live only in that
+in-memory map and are never returned.
 
-Label form is ``<Namensteil> <token>``; the token is always present and
+Label form is ``<given-name> <token>``; the token is always present and
 carries uniqueness, the name part is a readability aid (given name, plus the
 shortest unambiguous family-name prefix on first-name collisions, plus a
 ``(geschäftlich)`` / ``(privat)`` qualifier when a contact has several
@@ -25,28 +24,20 @@ addresses).
 """
 from __future__ import annotations
 
-import csv
-import io
-import os
 from collections import defaultdict
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 import vobject
 
-from mail_mcp import _pseudonym
+from mail_mcp import _config, _pseudonym
 
-_ENV_SOURCES = "JMD_MCP_MAIL_CONTACT_SOURCES"
-
-# vCard / CSV address-type → human label qualifier.
+# vCard address-type → human label qualifier.
 _TYPE_MAP = {"work": "geschäftlich", "home": "privat"}
 
-# CLI-configured source paths, set by the entrypoint before startup import.
-_cli_sources: list[Path] = []
-
-# Result of the last import: PII-free (label, token) pairs, label-sorted.
+# Process-lifetime state. Never persisted.
 _contacts: list[ContactEntry] = []
+_report: list[FileReport] = []
 
 
 @dataclass(frozen=True)
@@ -55,6 +46,15 @@ class ContactEntry:
 
     label: str
     token: str
+
+
+@dataclass(frozen=True)
+class FileReport:
+    """Per-file import outcome (PII-free)."""
+
+    filename: str
+    status: str  # "imported" | "error"
+    contacts: int
 
 
 @dataclass
@@ -68,31 +68,12 @@ class _RawEntry:
 
 
 # ---------------------------------------------------------------------------
-# Source discovery
-# ---------------------------------------------------------------------------
-
-
-def set_cli_sources(paths: Iterable[str | Path]) -> None:
-    """Record the ``--contacts`` paths supplied on the command line."""
-    global _cli_sources
-    _cli_sources = [Path(p) for p in paths]
-
-
-def configured_sources() -> list[Path]:
-    """Return all configured source paths: CLI args plus the env variable."""
-    sources = list(_cli_sources)
-    env = os.environ.get(_ENV_SOURCES, "")
-    sources += [Path(p) for p in env.split(os.pathsep) if p.strip()]
-    return sources
-
-
-# ---------------------------------------------------------------------------
-# Parsing
+# vCard parsing
 # ---------------------------------------------------------------------------
 
 
 def _norm_type(raw: str) -> str:
-    """Map a vCard/CSV address type to a human qualifier, or ''."""
+    """Map a vCard address type to a human qualifier, or ''."""
     return _TYPE_MAP.get(raw.strip().lower(), "")
 
 
@@ -118,8 +99,8 @@ def _parse_vcard(text: str) -> list[_RawEntry]:
             given = (getattr(nval, "given", "") or "").strip()
             family = (getattr(nval, "family", "") or "").strip()
         if not given and not family:
-            # No structured name — fall back to the first token of FN so the
-            # surname stays out of the label.
+            # No structured name — fall back to the first token of FN so
+            # the surname stays out of the label.
             fn_list = contents.get("fn", [])
             if fn_list and fn_list[0].value:
                 parts = str(fn_list[0].value).strip().split()
@@ -141,56 +122,6 @@ def _parse_vcard(text: str) -> list[_RawEntry]:
     return entries
 
 
-def _find_col(cols: dict[str, str], needles: tuple[str, ...]) -> str | None:
-    """Return the original header for the first column matching a needle."""
-    for low, orig in cols.items():
-        if any(n in low for n in needles):
-            return orig
-    return None
-
-
-def _parse_csv(text: str) -> list[_RawEntry]:
-    """Parse CSV text into raw entries with tolerant column mapping."""
-    reader = csv.DictReader(io.StringIO(text))
-    if not reader.fieldnames:
-        return []
-    cols = {c.lower().strip(): c for c in reader.fieldnames if c}
-    given_col = _find_col(cols, ("first name", "given name", "vorname"))
-    family_col = _find_col(
-        cols, ("last name", "family name", "surname", "nachname")
-    )
-    email_cols = [
-        orig for low, orig in cols.items()
-        if ("e-mail" in low or "email" in low)
-        and "type" not in low and "display" not in low
-    ]
-    entries: list[_RawEntry] = []
-    for row in reader:
-        given = (row.get(given_col, "") or "").strip() if given_col else ""
-        family = (row.get(family_col, "") or "").strip() if family_col else ""
-        addrs = [
-            v.strip() for col in email_cols
-            if (v := (row.get(col, "") or "").strip()) and "@" in v
-        ]
-        for addr in addrs:
-            # CSV type columns are unreliable across clients; rely on the
-            # always-present token to disambiguate multiple addresses.
-            entries.append(_RawEntry(given, family, addr, ""))
-    return entries
-
-
-def _parse_path(path: Path, text: str) -> list[_RawEntry]:
-    """Dispatch to the vCard or CSV parser by suffix, with a content sniff."""
-    suffix = path.suffix.lower()
-    if suffix == ".vcf":
-        return _parse_vcard(text)
-    if suffix == ".csv":
-        return _parse_csv(text)
-    if "BEGIN:VCARD" in text[:64].upper():
-        return _parse_vcard(text)
-    return _parse_csv(text)
-
-
 # ---------------------------------------------------------------------------
 # Label assignment
 # ---------------------------------------------------------------------------
@@ -210,7 +141,7 @@ def _min_unique_prefix_len(families: list[str]) -> int:
 
 
 def _assign_labels(raws: list[_RawEntry]) -> list[ContactEntry]:
-    """Build ``<Namensteil> <token>`` labels and seed the reverse map.
+    """Build ``<given> <token>`` labels and seed the reverse map.
 
     Groups by given name to detect first-name collisions; within a colliding
     group, appends the shortest unambiguous family-name prefix. A contact's
@@ -251,21 +182,33 @@ def _assign_labels(raws: list[_RawEntry]) -> list[ContactEntry]:
 # ---------------------------------------------------------------------------
 
 
-def load() -> list[ContactEntry]:
-    """(Re)import all configured sources into the in-memory address book.
+def _vcf_files() -> list[Path]:
+    """Return the sorted ``*.vcf`` files in the config directory."""
+    directory = _config.config_dir()
+    if not directory.is_dir():
+        return []
+    return sorted(directory.glob("*.vcf"))
 
-    A missing, unreadable or malformed source is skipped rather than fatal —
-    the server must always start. Returns the resulting PII-free entries.
+
+def load() -> list[ContactEntry]:
+    """(Re)import every ``*.vcf`` in the config directory.
+
+    A file that fails to parse is reported as ``error`` and skipped — never
+    fatal. Returns the resulting PII-free entries.
     """
-    global _contacts
+    global _contacts, _report
     raws: list[_RawEntry] = []
-    for path in configured_sources():
+    report: list[FileReport] = []
+    for path in _vcf_files():
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-            raws.extend(_parse_path(path, text))
-        except Exception:  # noqa: BLE001 — never let a bad source break startup
-            continue
+            entries = _parse_vcard(text)
+            raws.extend(entries)
+            report.append(FileReport(path.name, "imported", len(entries)))
+        except Exception:  # noqa: BLE001 — a bad file must not break startup
+            report.append(FileReport(path.name, "error", 0))
     _contacts = _assign_labels(raws)
+    _report = report
     return _contacts
 
 
@@ -274,8 +217,13 @@ def current() -> list[ContactEntry]:
     return list(_contacts)
 
 
+def report() -> list[FileReport]:
+    """Return the per-file outcome of the last import."""
+    return list(_report)
+
+
 def _reset_for_tests() -> None:
-    """Clear CLI sources and the imported list. Test-only seam."""
-    global _cli_sources, _contacts
-    _cli_sources = []
+    """Clear the imported list and report. Test-only seam."""
+    global _contacts, _report
     _contacts = []
+    _report = []

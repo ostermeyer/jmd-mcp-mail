@@ -65,7 +65,9 @@ smtp: string readonly
 username: string email readonly
 auth: string optional
 broker-client: string optional
-from-name: string readonly optional"""
+from-name: string readonly optional
+pseudonymize: boolean optional
+pseudonymize-domain: boolean optional"""
 
 PUBLIC_KEY: str = """\
 #! PublicKey

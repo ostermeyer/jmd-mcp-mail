@@ -79,10 +79,13 @@ class ConnectionInfo:
     password: str
     access_token: str = ""
     from_name: str = ""
+    pseudonymize: bool = True
+    pseudonymize_domain: bool = False
 
     @classmethod
     def resolve(
         cls, service: str, username: str, *, from_name: str = "",
+        pseudonymize: bool = True, pseudonymize_domain: bool = False,
     ) -> ConnectionInfo:
         """Build a connection from ``(service, username)``.
 
@@ -91,6 +94,8 @@ class ConnectionInfo:
                 ``[host]:port``).
             username: SMTP/IMAP login.
             from_name: Optional display name for the From header.
+            pseudonymize: Whether to pseudonymise identities on read.
+            pseudonymize_domain: Whether to add a domain token.
 
         Returns:
             A fully populated :class:`ConnectionInfo`.
@@ -110,12 +115,15 @@ class ConnectionInfo:
             username=username,
             password=password,
             from_name=from_name,
+            pseudonymize=pseudonymize,
+            pseudonymize_domain=pseudonymize_domain,
         )
 
     @classmethod
     def for_oauth(
         cls, service: str, username: str, access_token: str,
         *, from_name: str = "",
+        pseudonymize: bool = True, pseudonymize_domain: bool = False,
     ) -> ConnectionInfo:
         """Build an OAuth2 connection (XOAUTH2, no keystore password).
 
@@ -124,6 +132,8 @@ class ConnectionInfo:
             username: SMTP/IMAP login.
             access_token: A bearer access token (already unsealed).
             from_name: Optional display name for the From header.
+            pseudonymize: Whether to pseudonymise identities on read.
+            pseudonymize_domain: Whether to add a domain token.
 
         Returns:
             A :class:`ConnectionInfo` with ``access_token`` set; the
@@ -141,6 +151,8 @@ class ConnectionInfo:
             password="",
             access_token=access_token,
             from_name=from_name,
+            pseudonymize=pseudonymize,
+            pseudonymize_domain=pseudonymize_domain,
         )
 
 

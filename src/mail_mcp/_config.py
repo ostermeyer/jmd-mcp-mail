@@ -53,6 +53,11 @@ class Account:
         auth: ``basic`` (keystore password) or ``oauth2`` (sealed token).
         broker_client: For ``oauth2``, the jmd-mcp-oauth2 client name.
         from_name: Optional default display name for the From header.
+        pseudonymize: Whether the read path pseudonymises email
+            identities before they reach the LLM (default ``True``,
+            privacy by default). Set ``False`` to opt out per account.
+        pseudonymize_domain: Whether pseudonyms carry a domain token
+            (opt-in; default ``False``).
     """
 
     label: str
@@ -62,6 +67,8 @@ class Account:
     auth: str = "basic"
     broker_client: str = ""
     from_name: str = ""
+    pseudonymize: bool = True
+    pseudonymize_domain: bool = False
 
 
 def config_dir() -> Path:
@@ -102,6 +109,15 @@ def _validate(account: Account) -> None:
     parse_endpoint(account.smtp)
 
 
+def _as_bool(value: object, default: bool) -> bool:
+    """Coerce a JMD scalar to bool; absent (``None``) yields *default*."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
+
+
 def _account_from_dict(item: dict[str, Any]) -> Account:
     """Build and validate an Account from a parsed config entry."""
     try:
@@ -113,6 +129,10 @@ def _account_from_dict(item: dict[str, Any]) -> Account:
             auth=str(item.get("auth", "basic")),
             broker_client=str(item.get("broker-client", "")),
             from_name=str(item.get("from-name", "")),
+            pseudonymize=_as_bool(item.get("pseudonymize"), True),
+            pseudonymize_domain=_as_bool(
+                item.get("pseudonymize-domain"), False,
+            ),
         )
     except KeyError as exc:
         raise ValueError(

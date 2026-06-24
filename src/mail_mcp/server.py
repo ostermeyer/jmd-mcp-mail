@@ -16,7 +16,7 @@ import time
 from jmd import jmd_mode, jmd_to_dict, serialize
 from mcp.server.fastmcp import FastMCP
 
-from mail_mcp import _config, _sealing, smtp
+from mail_mcp import _config, _contacts, _sealing, smtp
 from mail_mcp import accounts as accounts_module
 from mail_mcp._credentials import (
     CredentialNotFoundError,
@@ -117,6 +117,8 @@ def _resolve_info(
         try:
             return ConnectionInfo.for_oauth(
                 service, acct.username, token, from_name=acct.from_name,
+                pseudonymize=acct.pseudonymize,
+                pseudonymize_domain=acct.pseudonymize_domain,
             )
         except ValueError as exc:
             return _error(400, "bad_request", str(exc))
@@ -134,6 +136,8 @@ def _resolve_info(
     try:
         return ConnectionInfo.resolve(
             service, acct.username, from_name=acct.from_name,
+            pseudonymize=acct.pseudonymize,
+            pseudonymize_domain=acct.pseudonymize_domain,
         )
     except CredentialNotFoundError as exc:
         return _error(401, "credential_missing", str(exc))
@@ -523,14 +527,13 @@ token: string readonly"""
 def contacts(document: str) -> str:
     r"""List or refresh the in-memory contact address book (DSGVO).
 
-    The address book is seeded at startup from files configured on the
-    server (``--contacts <path>`` args, or the
-    ``JMD_MCP_MAIL_CONTACT_SOURCES`` environment variable) — vCard or CSV
-    exports from any mainstream mail client. It lets you address people you
-    have never exchanged mail with, **without their real address ever
-    entering this context**: each entry is a pseudonym ``label`` (e.g.
-    ``Rebecca Sch. <a1b2c3>``) plus its ``token``. The real addresses live
-    only inside the server and are resolved at send time.
+    The address book is seeded at startup from any ``*.vcf`` (vCard)
+    files in the config directory (default ``~/.jmd-mcp-mail/``) — export
+    your contacts there from any mainstream mail client. It lets you
+    address people you have never exchanged mail with, **without their
+    real address ever entering this context**: each entry is a pseudonym
+    ``label`` (e.g. ``Rebecca Sch. <a1b2c3>``) plus its ``token``. The real
+    addresses live only inside the server and are resolved at send time.
 
     Document forms:
 
@@ -538,14 +541,14 @@ def contacts(document: str) -> str:
 
         # Contacts[]                (list current entries: label + token)
 
-        # Contacts                  (re-read the configured sources, then list)
+        # Contacts                  (re-scan the config dir, then list)
         reimport: true
 
     To write to someone here, pass their pseudonym to ``send`` exactly as
     shown (``to: Rebecca Sch. <a1b2c3>`` or ``to: a1b2c3``); the server
     resolves it to the real address. This tool NEVER returns an address.
-    Adding contacts is out-of-band (edit your export, then ``reimport``);
-    there is no way to add a contact through a tool call.
+    Adding contacts is out-of-band (drop a ``.vcf`` in the config dir, then
+    ``reimport``); there is no way to add a contact through a tool call.
     """
     try:
         mode = jmd_mode(document)
@@ -562,7 +565,21 @@ def contacts(document: str) -> str:
             and str(data.get("reimport", "")).strip().lower()
             in ("true", "1", "yes", "on")
         )
-        entries = _contacts.load() if reimport else _contacts.current()
+        if reimport:
+            entries = _contacts.load()
+            body = {
+                "count": len(entries),
+                "files": [
+                    {"name": f.filename, "status": f.status,
+                     "contacts": f.contacts}
+                    for f in _contacts.report()
+                ],
+                "entries": [
+                    {"label": e.label, "token": e.token} for e in entries
+                ],
+            }
+            return serialize(body, label="Contacts")
+        entries = _contacts.current()
         payload = [{"label": e.label, "token": e.token} for e in entries]
         return f"count: {len(payload)}\n\n" + serialize(
             payload, label="Contacts"
@@ -572,20 +589,9 @@ def contacts(document: str) -> str:
 
 
 def main() -> None:
-    """Entry point: seed contacts from configured sources, then run."""
-    import argparse
-
-    parser = argparse.ArgumentParser(prog="jmd-mcp-mail", add_help=False)
-    parser.add_argument(
-        "--contacts", action="append", default=[], dest="contacts",
-        help="Path to a vCard/CSV contact export (repeatable).",
-    )
-    args, _unknown = parser.parse_known_args()
-    if args.contacts:
-        _contacts.set_cli_sources(args.contacts)
-    # Seed the address book; load() is self-contained and never raises.
+    """Entry point: seed contacts from the config dir, then run."""
+    # Auto-imports any *.vcf in the config directory; never raises.
     _contacts.load()
-
     mcp.run()
 
 

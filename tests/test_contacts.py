@@ -1,8 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for _contacts.py — vCard/CSV import into the in-memory map.
-
-The HMAC secret is pinned via the env override so no OS keystore is touched.
-"""
+"""Unit tests for _contacts.py — vCard auto-discovery from the config dir."""
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -10,21 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from mail_mcp import _contacts, _pseudonym
+from mail_mcp import _config, _contacts, _pseudonym
 from mail_mcp._pseudonym import resolve_recipient
-
-
-@pytest.fixture(autouse=True)
-def _isolated(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Pin the secret and clear both module states around each test."""
-    monkeypatch.setenv("JMD_MCP_MAIL_PSEUDONYM_SECRET", "test-secret-fixed")
-    monkeypatch.delenv("JMD_MCP_MAIL_CONTACT_SOURCES", raising=False)
-    _pseudonym._reset_for_tests()
-    _contacts._reset_for_tests()
-    yield
-    _pseudonym._reset_for_tests()
-    _contacts._reset_for_tests()
-
 
 _VCARD_ONE = """\
 BEGIN:VCARD
@@ -60,47 +44,58 @@ EMAIL;TYPE=HOME:arne@privat.de
 END:VCARD
 """
 
-_CSV_GOOGLE = """\
-Given Name,Family Name,E-mail 1 - Value
-Carla,Klein,carla@firma.de
-"""
+
+@pytest.fixture(autouse=True)
+def _isolated(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Pin the secret and clear module state (config dir is isolated)."""
+    monkeypatch.setenv("JMD_MCP_MAIL_PSEUDONYM_SECRET", "test-secret-fixed")
+    _pseudonym._reset_for_tests()
+    _contacts._reset_for_tests()
+    yield
+    _pseudonym._reset_for_tests()
+    _contacts._reset_for_tests()
 
 
-def _write(tmp_path: Path, name: str, text: str) -> Path:
-    p = tmp_path / name
-    p.write_text(text, encoding="utf-8")
-    return p
+def _write_vcf(name: str, text: str) -> Path:
+    """Write a vCard file into the (isolated) config directory."""
+    directory = _config.config_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
-# ---------------------------------------------------------------------------
-# vCard
-# ---------------------------------------------------------------------------
+def _pick(entries: list[_contacts.ContactEntry], needle: str) -> str:
+    """Return the label of the entry whose label contains *needle*."""
+    return next(e.label for e in entries if needle in e.label)
 
 
-def test_vcard_single_entry_and_resolution(tmp_path: Path) -> None:
+def test_empty_when_no_vcf() -> None:
+    """No vCard files in the config dir → empty address book."""
+    assert _contacts.load() == []
+
+
+def test_single_entry_and_resolution() -> None:
     """A vCard entry yields 'Given <token>' and the token resolves back."""
-    _contacts.set_cli_sources([_write(tmp_path, "c.vcf", _VCARD_ONE)])
+    _write_vcf("c.vcf", _VCARD_ONE)
     entries = _contacts.load()
     assert len(entries) == 1
-    entry = entries[0]
-    assert entry.label.startswith("Rebecca <")
-    assert entry.label.endswith(">")
-    assert "@" not in entry.label  # surname & address stay out
-    assert resolve_recipient(entry.label) == "rebecca@firma.de"
-    assert resolve_recipient(entry.token) == "rebecca@firma.de"
+    assert entries[0].label.startswith("Rebecca <")
+    assert "@" not in entries[0].label
+    assert resolve_recipient(entries[0].label) == "rebecca@firma.de"
 
 
-def test_vcard_surname_disambiguation(tmp_path: Path) -> None:
+def test_surname_disambiguation() -> None:
     """Colliding first names get the shortest unambiguous surname prefix."""
-    _contacts.set_cli_sources([_write(tmp_path, "c.vcf", _VCARD_COLLISION)])
+    _write_vcf("c.vcf", _VCARD_COLLISION)
     labels = {e.label for e in _contacts.load()}
     assert any("Rebecca Schm." in lbl for lbl in labels)
     assert any("Rebecca Schn." in lbl for lbl in labels)
 
 
-def test_vcard_multiple_addresses_typed(tmp_path: Path) -> None:
-    """Each address becomes a discrete entry, distinguished by type label."""
-    _contacts.set_cli_sources([_write(tmp_path, "c.vcf", _VCARD_MULTI)])
+def test_multiple_addresses_typed() -> None:
+    """Each address is a discrete entry, distinguished by type qualifier."""
+    _write_vcf("c.vcf", _VCARD_MULTI)
     entries = _contacts.load()
     labels = {e.label for e in entries}
     assert len(entries) == 2
@@ -110,50 +105,28 @@ def test_vcard_multiple_addresses_typed(tmp_path: Path) -> None:
     assert resolve_recipient(_pick(entries, "privat")) == "arne@privat.de"
 
 
-def _pick(entries: list[_contacts.ContactEntry], needle: str) -> str:
-    """Return the label of the entry whose label contains *needle*."""
-    return next(e.label for e in entries if needle in e.label)
-
-
-# ---------------------------------------------------------------------------
-# CSV
-# ---------------------------------------------------------------------------
-
-
-def test_csv_google_headers(tmp_path: Path) -> None:
-    """Google-style CSV headers parse and resolve."""
-    _contacts.set_cli_sources([_write(tmp_path, "c.csv", _CSV_GOOGLE)])
+def test_auto_discovers_multiple_files() -> None:
+    """All *.vcf in the config dir are imported."""
+    _write_vcf("a.vcf", _VCARD_ONE)
+    _write_vcf("b.vcf", _VCARD_MULTI)
     entries = _contacts.load()
-    assert len(entries) == 1
-    assert entries[0].label.startswith("Carla <")
-    assert resolve_recipient(entries[0].label) == "carla@firma.de"
+    assert len(entries) == 3  # 1 + 2
 
 
-# ---------------------------------------------------------------------------
-# Sources & robustness
-# ---------------------------------------------------------------------------
+def test_report_lists_files() -> None:
+    """The per-file report records each imported file."""
+    _write_vcf("work.vcf", _VCARD_ONE)
+    _contacts.load()
+    rep = _contacts.report()
+    assert len(rep) == 1
+    assert rep[0].filename == "work.vcf"
+    assert rep[0].status == "imported"
+    assert rep[0].contacts == 1
 
 
-def test_env_var_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The env variable is honoured as an alternative source."""
-    path = _write(tmp_path, "c.vcf", _VCARD_ONE)
-    monkeypatch.setenv("JMD_MCP_MAIL_CONTACT_SOURCES", str(path))
-    entries = _contacts.load()
-    assert len(entries) == 1
-    assert resolve_recipient(entries[0].token) == "rebecca@firma.de"
-
-
-def test_missing_source_is_non_fatal(tmp_path: Path) -> None:
-    """A non-existent source path is skipped, not raised."""
-    _contacts.set_cli_sources([tmp_path / "does-not-exist.vcf"])
-    assert _contacts.load() == []
-
-
-def test_listing_is_pii_free(tmp_path: Path) -> None:
+def test_listing_is_pii_free() -> None:
     """Neither labels nor tokens ever contain a real address."""
-    _contacts.set_cli_sources([_write(tmp_path, "c.vcf", _VCARD_MULTI)])
+    _write_vcf("c.vcf", _VCARD_MULTI)
     for entry in _contacts.load():
         assert "@" not in entry.label
         assert "@" not in entry.token
