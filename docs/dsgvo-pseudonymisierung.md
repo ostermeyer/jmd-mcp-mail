@@ -244,5 +244,58 @@ Beispiele: `Rebecca <k7f2a9>`, `Rebecca Sch. <k7f2a9>`,
 
 ---
 
-*Kern-Pseudonymisierung umgesetzt (Commit f58215f). Adressbuch / Kontakt-Import:
-Designkonsens 2026-06-23, Umsetzung nach ausdrücklichem Go.*
+## 13. Container-Scoping (absender-verankert)
+
+Schließt Mail aus, deren *Inhalt* mit hoher Wahrscheinlichkeit sensibel ist, weil
+sie aus einer **systematisch sensiblen Beziehung** stammt (Betriebsarzt, Anwalt,
+Bank, Versicherung, HR …). Ergänzt die Pseudonymisierung (schützt *wer*) und das
+Masking (schützt *was im Text*) um eine dritte Achse: *ob die Mail überhaupt
+verarbeitet wird*.
+
+### 13.1 Mechanismus — am Absender, nicht an der Empfängerliste
+
+- Eine **Exclude-Menge** über **Adressen und Domänen**, serverseitig ausgewertet
+  am **Absender** (`From`, ggf. `Reply-To`). Trifft sie zu → die Mail wird
+  vollständig aus `read`/Query weggelassen (kein Body, keine Identität); der
+  Zähler meldet „N gesamt, M in scope".
+- **Bewusst NICHT an der Empfängerliste** (`To`/`Cc`): Die Liste ist genau die
+  Dimension, die von der Empfänger-Disziplinlosigkeit der Versender verseucht ist.
+  Sie als Drop-Kriterium zu nehmen, würde die Krankheit zum Filter machen und den
+  Großteil legitimer Geschäftsmail verschwinden lassen — Ziel verfehlt. Der
+  Absender dagegen ist das verlässliche Signal für die *Natur* einer Mail.
+
+### 13.2 Haltung & Default
+
+- **Default permissiv**: nur explizit sensible Absender/Domänen raus — Coverage
+  hat Vorrang (das Tool soll die Flut bewältigen).
+- **Optionaler strikter Modus**: Absender-*Whitelist* (nur `From` bekannter
+  Domänen) für Hochsensibilitäts-Accounts — **nicht** Default, da er den externen
+  Bulk killt.
+- Quelle wie bei Kontakten: aus der MCP-Server-Config (CLI-Args / Env), außerhalb
+  der LLM-Reichweite.
+- **self-Adressen** konfigurierbar (Login + optionale Aliase), damit selbst
+  gesendete Mail korrekt als „von mir" erkannt wird.
+
+### 13.3 Bewusst verworfen / Restfall
+
+- Empfängerlisten-basierter Drop (siehe 13.1).
+- **Irreduzibler Rest**: Eine Mail, die einen Sensiblen nur *einschließt* (aber
+  nicht von ihm stammt), wird verarbeitet (Adresse tokenisiert, Body nur
+  regex-maskiert). Ebenso der *vermischte* Fall (in-scope-Absender schreibt
+  beiläufig Sensibles). Beides bleibt der dokumentierten Risikoabwägung des
+  Verantwortlichen (DSFA) — durch Scoping verengt, nicht geschlossen.
+
+## 14. Send-seitige Empfänger-Hygiene (Roadmap)
+
+Die aktive Mitigation der Empfänger-Disziplinlosigkeit gehört in den `send`-Pfad,
+nicht ins Read-Scoping: eine **Warnung vor dem Senden** bei großen / gemischten /
+externen Empfängerlisten (z. B. „Antwort an N Empfänger, davon X extern, Y
+außerhalb deiner Domäne — wirklich an alle?"). Macht aus dem Problem ein Feature.
+Designkonsens 2026-06-23; Detail-Spezifikation und Umsetzung offen.
+
+---
+
+*Stand 2026-06-23. Umgesetzt: Identitäts-Pseudonymisierung (f58215f),
+Kontakt-Import (059ec0c), Content-Masking (8a1851a). Designkonsens, noch nicht
+umgesetzt: Container-Scoping (§13), Send-Empfänger-Hygiene (§14),
+Lese-Pfad-Anreicherung (§12.6). Umsetzung je nach ausdrücklichem Go.*
