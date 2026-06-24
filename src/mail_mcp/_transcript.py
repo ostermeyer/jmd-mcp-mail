@@ -7,11 +7,18 @@ as seen in the chat — back to the real name and address. Labels alone are
 ambiguous (several `Rebecca <…>`), so this table closes that gap.
 
 It **is** the re-identification key: written only by the server, never read by
-any tool, and must be kept private. Rows accumulate over time (imports +
-addresses seen while reading mail) and survive restarts — each :func:`sync`
-reads the existing file, merges the current session's rows by token, and
-rewrites the table sorted. (Resolution for send/search is NOT re-seeded from
-this file; it stays session-scoped.)
+any tool, and must be kept private.
+
+It is a transcript of the CURRENT session only — never a data source. The
+in-memory rows mirror the live token→address map (both grow as contacts are
+imported and mail is read), and :func:`sync` simply rewrites the file from
+those rows; it never merges a previous run's file. :func:`purge` deletes it,
+called at startup (so a prior session's key never lingers) and best-effort on
+shutdown. A hard kill cannot be intercepted, but the next startup's purge
+clears the file before anything is written.
+
+(Resolution for send/search is likewise session-scoped and is NEVER re-seeded
+from this file — the file documents the session, it does not drive it.)
 """
 from __future__ import annotations
 
@@ -66,22 +73,6 @@ def _path() -> Path:
     return _config.config_dir() / _FILENAME
 
 
-def _parse_existing(text: str) -> dict[str, Row]:
-    """Parse a previously-written contacts.md table into rows by token."""
-    rows: dict[str, Row] = {}
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line.startswith("|"):
-            continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        if len(cells) != len(_COLUMNS):
-            continue
-        if cells[0] == "token" or set(cells[0]) <= {"-", ":"}:
-            continue  # header or separator row
-        rows[cells[0]] = Row(*cells)
-    return rows
-
-
 def _render(rows: dict[str, Row]) -> str:
     """Render rows as a Markdown table (pipes in values neutralised)."""
     lines = [
@@ -101,24 +92,35 @@ def _render(rows: dict[str, Row]) -> str:
 
 
 def sync() -> None:
-    """Write contacts.md if rows were recorded, merging the existing file."""
+    """Rewrite contacts.md from this session's rows (overwrite, no merge).
+
+    The file mirrors the in-memory session state; a previous run's file is
+    overwritten, never merged. No-op until a row has been recorded — a stale
+    file with nothing new to write is cleared by :func:`purge` at startup, not
+    here.
+    """
     global _dirty
     if not _dirty:
         return
     path = _path()
-    merged: dict[str, Row] = {}
-    try:
-        if path.exists():
-            merged = _parse_existing(path.read_text(encoding="utf-8"))
-    except OSError:
-        merged = {}
-    merged.update(_rows)  # session rows win over stale file rows
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_render(merged), encoding="utf-8")
+        path.write_text(_render(_rows), encoding="utf-8")
     except OSError:
         return
     _dirty = False
+
+
+def purge() -> None:
+    """Best-effort delete of contacts.md (session boundary / shutdown).
+
+    Called at startup (drop any prior session's key before writing) and on
+    graceful shutdown. A hard kill cannot run it; the next startup will.
+    """
+    try:
+        _path().unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _reset_for_tests() -> None:

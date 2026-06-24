@@ -11,6 +11,7 @@ password is resolved from the OS keystore under
 """
 from __future__ import annotations
 
+import signal
 import time
 
 from jmd import jmd_mode, jmd_to_dict, serialize
@@ -592,11 +593,41 @@ def contacts(document: str) -> str:
     return _error(400, "bad_request", f"unsupported mode: {mode!r}")
 
 
+def _install_shutdown_purge() -> None:
+    """Best-effort: delete the transcript on SIGTERM/SIGINT too.
+
+    The ``try``/``finally`` in :func:`main` covers a graceful shutdown (stdio
+    close, normal return, exceptions); this adds the signal paths where the
+    process would otherwise die without running ``finally``. A SIGKILL cannot
+    be caught — the next startup's purge clears the file instead.
+    """
+    def _handler(signum: int, frame: object) -> None:
+        _transcript.purge()
+        raise SystemExit(0)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _handler)
+        except (ValueError, OSError):
+            pass  # not the main thread, or unsupported on this platform
+
+
 def main() -> None:
-    """Entry point: seed contacts from the config dir, then run."""
-    # Auto-imports any *.vcf in the config directory; never raises.
+    """Entry point: clear any stale transcript, seed contacts, then run.
+
+    contacts.md is a single-session transcript: it is purged at startup (so a
+    prior session's re-identification key never lingers) and best-effort purged
+    on shutdown.
+    """
+    _transcript.purge()           # drop any prior session's transcript first
+    _install_shutdown_purge()
+    # Auto-imports any *.vcf/*.pst in the config dir; never raises. This
+    # regenerates contacts.md from the current imports.
     _contacts.load()
-    mcp.run()
+    try:
+        mcp.run()
+    finally:
+        _transcript.purge()
 
 
 if __name__ == "__main__":

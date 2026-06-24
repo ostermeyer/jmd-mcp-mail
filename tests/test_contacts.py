@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mail_mcp import _config, _contacts, _pseudonym
+from mail_mcp import _config, _contacts, _pseudonym, _transcript
 from mail_mcp._pseudonym import resolve_recipient
 
 _VCARD_ONE = """\
@@ -156,18 +156,36 @@ def test_transcript_written_with_addresses() -> None:
     assert "rebecca@firma.de" in md  # the transcript IS the lookup key
 
 
-def test_transcript_merges_existing() -> None:
-    """A pre-existing contacts.md row survives a new import (append)."""
+def test_transcript_overwrites_previous_session() -> None:
+    """contacts.md is a session mirror: a prior run's file is NOT merged.
+
+    Any row from a previous session — including a past mis-attribution —
+    vanishes on the next import; only the current session's rows remain.
+    """
     path = _config.config_dir() / "contacts.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "| token | given | surname | label | email | source |\n"
         "|---|---|---|---|---|---|\n"
-        "| oldtok | Old | Person | Old <oldtok> | old@x.de | mail |\n",
+        "| stale | Wrong | Name | Wrong <stale> | victim@x.de | c.vcf |\n"
+        "| mailt | Seen | Sender | Seen <mailt> | seen@y.de | mail |\n",
         encoding="utf-8",
     )
     _write_vcf("c.vcf", _VCARD_ONE)
     _contacts.load()
     md = path.read_text(encoding="utf-8")
-    assert "oldtok" in md             # pre-existing row preserved
-    assert "rebecca@firma.de" in md   # new row added
+    assert "stale" not in md          # prior-session rows gone, not merged
+    assert "victim@x.de" not in md
+    assert "mailt" not in md          # mail row from a past session not kept
+    assert "rebecca@firma.de" in md   # only the current import remains
+
+
+def test_purge_deletes_transcript() -> None:
+    """purge() removes contacts.md and tolerates an already-absent file."""
+    path = _config.config_dir() / "contacts.md"
+    _write_vcf("c.vcf", _VCARD_ONE)
+    _contacts.load()
+    assert path.exists()
+    _transcript.purge()
+    assert not path.exists()
+    _transcript.purge()               # idempotent — no error when absent
