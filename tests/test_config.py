@@ -73,6 +73,18 @@ def test_load_oauth_fields() -> None:
     assert acc.broker_client == "outlook"
 
 
+def test_mask_content_default_and_override() -> None:
+    """mask-content defaults to True; an account can opt out via config."""
+    _write_config(_BASIC)
+    acc = _config.resolve("ionos")
+    assert acc is not None
+    assert acc.mask_content is True
+    _write_config(_BASIC.rstrip() + "\n  mask-content: false\n")
+    acc2 = _config.resolve("ionos")
+    assert acc2 is not None
+    assert acc2.mask_content is False
+
+
 def test_from_name_optional() -> None:
     """An optional from-name is parsed when present."""
     _write_config(_BASIC.rstrip() + "\n  from-name: Andreas O.\n")

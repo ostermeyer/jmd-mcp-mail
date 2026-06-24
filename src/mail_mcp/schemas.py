@@ -67,7 +67,8 @@ auth: string optional
 broker-client: string optional
 from-name: string readonly optional
 pseudonymize: boolean optional
-pseudonymize-domain: boolean optional"""
+pseudonymize-domain: boolean optional
+mask-content: boolean optional"""
 
 PUBLIC_KEY: str = """\
 #! PublicKey

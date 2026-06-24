@@ -58,6 +58,10 @@ class Account:
             privacy by default). Set ``False`` to opt out per account.
         pseudonymize_domain: Whether pseudonyms carry a domain token
             (opt-in; default ``False``).
+        mask_content: Whether the read path masks content-layer
+            identifiers (servers/IPs/phones/host:port) in subject and
+            body. Default ``True``; governed only here (out-of-reach),
+            so an LLM-supplied frontmatter cannot weaken it.
     """
 
     label: str
@@ -69,6 +73,7 @@ class Account:
     from_name: str = ""
     pseudonymize: bool = True
     pseudonymize_domain: bool = False
+    mask_content: bool = True
 
 
 def config_dir() -> Path:
@@ -133,6 +138,7 @@ def _account_from_dict(item: dict[str, Any]) -> Account:
             pseudonymize_domain=_as_bool(
                 item.get("pseudonymize-domain"), False,
             ),
+            mask_content=_as_bool(item.get("mask-content"), True),
         )
     except KeyError as exc:
         raise ValueError(

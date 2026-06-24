@@ -9,7 +9,6 @@ import pytest
 from mail_mcp import _masking, _pseudonym
 from mail_mcp._pseudonym import Pseudonymizer
 from mail_mcp.imap._parse import message_to_dict, parse_message
-from mail_mcp.imap.read import _mask_enabled
 
 
 @pytest.fixture(autouse=True)
@@ -111,25 +110,3 @@ def test_message_mask_off_keeps_content() -> None:
     body = str(d["body"])
     assert "sapprd01.firma.intern" in body
     assert "alice@acme.com" not in body  # identity layer still applies
-
-
-# ---------------------------------------------------------------------------
-# Frontmatter opt-out
-# ---------------------------------------------------------------------------
-
-
-def test_mask_enabled_default_on() -> None:
-    """Masking is on when no frontmatter flag is present."""
-    assert _mask_enabled("# Message\nid: 1\nfolder: INBOX") is True
-
-
-def test_mask_enabled_opt_out() -> None:
-    """`mask-content: false` disables masking for the call."""
-    doc = "mask-content: false\n\n# Message\nid: 1\nfolder: INBOX"
-    assert _mask_enabled(doc) is False
-
-
-def test_mask_enabled_explicit_true() -> None:
-    """`mask-content: true` keeps masking on."""
-    doc = "mask-content: true\n\n#? Message\nfolder: INBOX"
-    assert _mask_enabled(doc) is True

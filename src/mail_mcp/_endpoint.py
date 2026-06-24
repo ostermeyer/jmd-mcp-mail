@@ -81,11 +81,13 @@ class ConnectionInfo:
     from_name: str = ""
     pseudonymize: bool = True
     pseudonymize_domain: bool = False
+    mask_content: bool = True
 
     @classmethod
     def resolve(
         cls, service: str, username: str, *, from_name: str = "",
         pseudonymize: bool = True, pseudonymize_domain: bool = False,
+        mask_content: bool = True,
     ) -> ConnectionInfo:
         """Build a connection from ``(service, username)``.
 
@@ -96,6 +98,7 @@ class ConnectionInfo:
             from_name: Optional display name for the From header.
             pseudonymize: Whether to pseudonymise identities on read.
             pseudonymize_domain: Whether to add a domain token.
+            mask_content: Whether to mask content-layer identifiers.
 
         Returns:
             A fully populated :class:`ConnectionInfo`.
@@ -117,6 +120,7 @@ class ConnectionInfo:
             from_name=from_name,
             pseudonymize=pseudonymize,
             pseudonymize_domain=pseudonymize_domain,
+            mask_content=mask_content,
         )
 
     @classmethod
@@ -124,6 +128,7 @@ class ConnectionInfo:
         cls, service: str, username: str, access_token: str,
         *, from_name: str = "",
         pseudonymize: bool = True, pseudonymize_domain: bool = False,
+        mask_content: bool = True,
     ) -> ConnectionInfo:
         """Build an OAuth2 connection (XOAUTH2, no keystore password).
 
@@ -134,6 +139,7 @@ class ConnectionInfo:
             from_name: Optional display name for the From header.
             pseudonymize: Whether to pseudonymise identities on read.
             pseudonymize_domain: Whether to add a domain token.
+            mask_content: Whether to mask content-layer identifiers.
 
         Returns:
             A :class:`ConnectionInfo` with ``access_token`` set; the
@@ -153,6 +159,7 @@ class ConnectionInfo:
             from_name=from_name,
             pseudonymize=pseudonymize,
             pseudonymize_domain=pseudonymize_domain,
+            mask_content=mask_content,
         )
 
 

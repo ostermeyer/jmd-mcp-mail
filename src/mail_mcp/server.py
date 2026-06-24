@@ -39,7 +39,7 @@ from mail_mcp.imap.read import _error
 # Known frontmatter keys per tool (observable tolerance / strict refusal).
 _KNOWN_FM_READ: frozenset[str] = frozenset({
     "page", "page-size", "count", "debug",
-    "access-token-sealed", "mask-content",
+    "access-token-sealed",
 })
 _KNOWN_FM_WRITE: frozenset[str] = frozenset({
     "rename-to", "move-to", "copy-to", "debug",
@@ -119,6 +119,7 @@ def _resolve_info(
                 service, acct.username, token, from_name=acct.from_name,
                 pseudonymize=acct.pseudonymize,
                 pseudonymize_domain=acct.pseudonymize_domain,
+                mask_content=acct.mask_content,
             )
         except ValueError as exc:
             return _error(400, "bad_request", str(exc))
@@ -138,6 +139,7 @@ def _resolve_info(
             service, acct.username, from_name=acct.from_name,
             pseudonymize=acct.pseudonymize,
             pseudonymize_domain=acct.pseudonymize_domain,
+            mask_content=acct.mask_content,
         )
     except CredentialNotFoundError as exc:
         return _error(401, "credential_missing", str(exc))
