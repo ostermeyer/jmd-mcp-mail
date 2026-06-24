@@ -8,6 +8,8 @@ from pathlib import Path
 import keyring
 import pytest
 
+from mail_mcp import _transcript
+
 
 @pytest.fixture(autouse=True)
 def _isolated_config(
@@ -15,14 +17,15 @@ def _isolated_config(
 ) -> None:
     """Point the config dir (and legacy path) at a throwaway location.
 
-    Protects every test from touching the real ``~/.jmd-mcp-mail`` and
+    Protects every test from touching the real ``~/.jmd-mcp-mail``,
     neutralises the best-effort legacy migration (the legacy path points
-    at a non-existent temp file).
+    at a non-existent temp file), and clears the in-memory transcript.
     """
     monkeypatch.setenv("JMD_MCP_MAIL_HOME", str(tmp_path / "home"))
     monkeypatch.setenv(
         "JMD_MCP_MAIL_ACCOUNTS_PATH", str(tmp_path / "legacy-absent.jmd"),
     )
+    _transcript._reset_for_tests()
 
 
 @pytest.fixture

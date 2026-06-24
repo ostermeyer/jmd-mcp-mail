@@ -42,6 +42,8 @@ from typing import TYPE_CHECKING
 
 import keyring
 
+from mail_mcp import _transcript
+
 if TYPE_CHECKING:
     from mail_mcp.imap._parse import EmailAddressRecord
 
@@ -132,6 +134,17 @@ def _given_name(name: str | None) -> str | None:
     return first if _GIVEN_RE.match(first) else None
 
 
+def _surname(name: str | None, given: str) -> str:
+    """Best-effort surname from a display name (empty if unclear)."""
+    name = (name or "").strip()
+    if not name or "," in name:
+        return ""
+    parts = name.split()
+    if len(parts) > 1 and parts[0] == given:
+        return " ".join(parts[1:])
+    return ""
+
+
 def _atom(value: str) -> str:
     """Return the addr-spec inside ``<...>`` or the bare trimmed value."""
     v = value.strip()
@@ -171,16 +184,30 @@ class Pseudonymizer:
             # Name-only artefact — nothing to tokenise; drop the name
             # rather than leak it.
             return EmailAddressRecord(name="", email="")
-        return EmailAddressRecord(
-            name=_given_name(rec.name) or "",
-            email=self._bracket(rec.email),
+        token = self._bracket(rec.email)
+        given = _given_name(rec.name) or ""
+        label = f"{given} <{token}>" if given else f"<{token}>"
+        _transcript.record(
+            token, given=given, surname=_surname(rec.name, given),
+            label=label, email=rec.email, source="mail",
         )
+        return EmailAddressRecord(name=given, email=token)
 
     def text(self, s: str) -> str:
         """Replace any email addresses in free text with ``<token>``."""
         if not s:
             return s
-        return _EMAIL_RE.sub(lambda m: f"<{self._bracket(m.group(0))}>", s)
+
+        def repl(match: re.Match[str]) -> str:
+            addr = match.group(0)
+            token = self._bracket(addr)
+            _transcript.record(
+                token, given="", surname="", label=f"<{token}>",
+                email=addr, source="mail",
+            )
+            return f"<{token}>"
+
+        return _EMAIL_RE.sub(repl, s)
 
 
 def register(address: str) -> str:

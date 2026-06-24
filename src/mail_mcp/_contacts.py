@@ -24,16 +24,33 @@ addresses).
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import vobject
 
-from mail_mcp import _config, _pseudonym
+from mail_mcp import _config, _pseudonym, _transcript
+
+try:  # optional: PST import needs the libpff binding (PyPI: libpff-python)
+    import pypff
+except ImportError:  # not installed → .pst files are reported as skipped
+    pypff = None
 
 # vCard address-type → human label qualifier.
 _TYPE_MAP = {"work": "geschäftlich", "home": "privat"}
+
+# Email-shaped value matcher for harvesting addresses from PST string props.
+_EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+
+# MAPI property tags (fixed, language-independent).
+_TAG_MESSAGE_CLASS = 0x001A
+_TAG_GIVEN_NAME = 0x3A06
+_TAG_SURNAME = 0x3A11
+_TAG_DISPLAY_NAME = 0x3001
 
 # Process-lifetime state. Never persisted.
 _contacts: list[ContactEntry] = []
@@ -53,7 +70,7 @@ class FileReport:
     """Per-file import outcome (PII-free)."""
 
     filename: str
-    status: str  # "imported" | "error"
+    status: str  # "imported" | "error" | "skipped"
     contacts: int
 
 
@@ -65,6 +82,7 @@ class _RawEntry:
     family: str
     email: str
     etype: str  # normalised qualifier: "geschäftlich" | "privat" | ""
+    source: str  # originating filename (for the transcript)
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +105,7 @@ def _vcard_types(line: object) -> list[str]:
     return types
 
 
-def _parse_vcard(text: str) -> list[_RawEntry]:
+def _parse_vcard(text: str, source: str) -> list[_RawEntry]:
     """Parse vCard text into raw entries (one per address)."""
     entries: list[_RawEntry] = []
     for card in vobject.readComponents(text):
@@ -117,8 +135,80 @@ def _parse_vcard(text: str) -> list[_RawEntry]:
                         etype = _norm_type(t)
                         break
             entries.append(
-                _RawEntry(given, family, line.value.strip(), etype)
+                _RawEntry(given, family, line.value.strip(), etype, source)
             )
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# PST parsing (optional, via libpff-python / pypff)
+# ---------------------------------------------------------------------------
+
+
+def _pst_walk(folder: Any) -> Iterator[Any]:
+    """Yield every message in *folder* and its sub-folders, recursively."""
+    for i in range(folder.number_of_sub_messages):
+        yield folder.get_sub_message(i)
+    for j in range(folder.number_of_sub_folders):
+        yield from _pst_walk(folder.get_sub_folder(j))
+
+
+def _pst_entries(message: Any) -> list[Any]:
+    """Flatten all record-set entries of a message."""
+    out: list[Any] = []
+    for s in range(message.number_of_record_sets):
+        record_set = message.get_record_set(s)
+        for i in range(record_set.number_of_entries):
+            out.append(record_set.get_entry(i))
+    return out
+
+
+def _entry_string(entries: list[Any], tag: int) -> str:
+    """Return the string value of the record entry with *tag*, or ''."""
+    for entry in entries:
+        if entry.entry_type == tag:
+            try:
+                return entry.get_data_as_string() or ""
+            except Exception:  # noqa: BLE001 — non-string / unreadable entry
+                return ""
+    return ""
+
+
+def _parse_pst(path: Path, source: str) -> list[_RawEntry]:
+    """Extract IPM.Contact entries from a PST via pypff (value-harvest).
+
+    pypff cannot resolve named properties (Email1/2/3 are mapped to different
+    tags in every PST), so email addresses are harvested by value: any string
+    property whose value is an email address, de-duplicated per contact. The
+    name comes from the fixed, language-independent MAPI tags.
+    """
+    assert pypff is not None  # caller guards; satisfies the type checker
+    entries: list[_RawEntry] = []
+    pff = pypff.file()
+    pff.open(str(path))
+    try:
+        for message in _pst_walk(pff.get_root_folder()):
+            es = _pst_entries(message)
+            if _entry_string(es, _TAG_MESSAGE_CLASS) != "IPM.Contact":
+                continue
+            given = _entry_string(es, _TAG_GIVEN_NAME)
+            family = _entry_string(es, _TAG_SURNAME)
+            if not given and not family:
+                display = _entry_string(es, _TAG_DISPLAY_NAME).split()
+                given = display[0] if display else ""
+            seen: set[str] = set()
+            for entry in es:
+                try:
+                    val = (entry.get_data_as_string() or "").strip()
+                except Exception:  # noqa: BLE001 — non-string entry
+                    continue
+                if val and _EMAIL.fullmatch(val) and val.lower() not in seen:
+                    seen.add(val.lower())
+                    entries.append(
+                        _RawEntry(given, family, val, "", source)
+                    )
+    finally:
+        pff.close()
     return entries
 
 
@@ -172,6 +262,10 @@ def _assign_labels(raws: list[_RawEntry]) -> list[ContactEntry]:
                 continue
             seen_tokens.add(token)
             label = f"{name_part} <{token}>".strip()
+            _transcript.record(
+                token, given=raw.given, surname=raw.family,
+                label=label, email=raw.email, source=raw.source,
+            )
             out.append(ContactEntry(label=label, token=token))
     out.sort(key=lambda c: c.label.lower())
     return out
@@ -182,33 +276,46 @@ def _assign_labels(raws: list[_RawEntry]) -> list[ContactEntry]:
 # ---------------------------------------------------------------------------
 
 
-def _vcf_files() -> list[Path]:
-    """Return the sorted ``*.vcf`` files in the config directory."""
+def _files(suffix: str) -> list[Path]:
+    """Return the sorted files with *suffix* in the config directory."""
     directory = _config.config_dir()
     if not directory.is_dir():
         return []
-    return sorted(directory.glob("*.vcf"))
+    return sorted(directory.glob(f"*{suffix}"))
 
 
 def load() -> list[ContactEntry]:
-    """(Re)import every ``*.vcf`` in the config directory.
+    """(Re)import every ``*.vcf`` and ``*.pst`` in the config directory.
 
-    A file that fails to parse is reported as ``error`` and skipped — never
-    fatal. Returns the resulting PII-free entries.
+    A file that fails to parse is reported as ``error`` and skipped; a
+    ``*.pst`` with the libpff binding (``pypff``) absent is reported as
+    ``skipped`` — never fatal. Also (re)writes ``contacts.md``. Returns the
+    resulting PII-free entries.
     """
     global _contacts, _report
     raws: list[_RawEntry] = []
     report: list[FileReport] = []
-    for path in _vcf_files():
+    for path in _files(".vcf"):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-            entries = _parse_vcard(text)
+            entries = _parse_vcard(text, path.name)
+            raws.extend(entries)
+            report.append(FileReport(path.name, "imported", len(entries)))
+        except Exception:  # noqa: BLE001 — a bad file must not break startup
+            report.append(FileReport(path.name, "error", 0))
+    for path in _files(".pst"):
+        if pypff is None:
+            report.append(FileReport(path.name, "skipped", 0))
+            continue
+        try:
+            entries = _parse_pst(path, path.name)
             raws.extend(entries)
             report.append(FileReport(path.name, "imported", len(entries)))
         except Exception:  # noqa: BLE001 — a bad file must not break startup
             report.append(FileReport(path.name, "error", 0))
     _contacts = _assign_labels(raws)
     _report = report
+    _transcript.sync()
     return _contacts
 
 

@@ -130,3 +130,44 @@ def test_listing_is_pii_free() -> None:
     for entry in _contacts.load():
         assert "@" not in entry.label
         assert "@" not in entry.token
+
+
+def test_pst_skipped_when_pypff_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A .pst with pypff unavailable is reported 'skipped', not fatal."""
+    _write_vcf("c.vcf", _VCARD_ONE)
+    (_config.config_dir() / "x.pst").write_bytes(b"not a real pst")
+    monkeypatch.setattr(_contacts, "pypff", None)
+    entries = _contacts.load()
+    statuses = {r.filename: r.status for r in _contacts.report()}
+    assert statuses.get("x.pst") == "skipped"
+    assert statuses.get("c.vcf") == "imported"
+    assert len(entries) == 1  # only the vCard contact
+
+
+def test_transcript_written_with_addresses() -> None:
+    """load() writes contacts.md — the re-id key — with token + address."""
+    _write_vcf("c.vcf", _VCARD_ONE)
+    _contacts.load()
+    md = (_config.config_dir() / "contacts.md").read_text(encoding="utf-8")
+    assert "| token |" in md
+    assert "Rebecca" in md
+    assert "rebecca@firma.de" in md  # the transcript IS the lookup key
+
+
+def test_transcript_merges_existing() -> None:
+    """A pre-existing contacts.md row survives a new import (append)."""
+    path = _config.config_dir() / "contacts.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "| token | given | surname | label | email | source |\n"
+        "|---|---|---|---|---|---|\n"
+        "| oldtok | Old | Person | Old <oldtok> | old@x.de | mail |\n",
+        encoding="utf-8",
+    )
+    _write_vcf("c.vcf", _VCARD_ONE)
+    _contacts.load()
+    md = path.read_text(encoding="utf-8")
+    assert "oldtok" in md             # pre-existing row preserved
+    assert "rebecca@firma.de" in md   # new row added

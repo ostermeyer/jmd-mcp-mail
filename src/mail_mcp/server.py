@@ -16,7 +16,7 @@ import time
 from jmd import jmd_mode, jmd_to_dict, serialize
 from mcp.server.fastmcp import FastMCP
 
-from mail_mcp import _config, _contacts, _sealing, smtp
+from mail_mcp import _config, _contacts, _sealing, _transcript, smtp
 from mail_mcp import accounts as accounts_module
 from mail_mcp._credentials import (
     CredentialNotFoundError,
@@ -284,6 +284,8 @@ async def read(account: str, document: str) -> str:
         dbg = parse_debug(fm)
         t0 = time.perf_counter()
         result = await imap_read.read(document, info)
+        # Persist any newly-seen addresses to the contacts.md transcript.
+        _transcript.sync()
         if dbg.active:
             dbg.timing_ms = (
                 (time.perf_counter() - t0) * 1000
