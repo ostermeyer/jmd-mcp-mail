@@ -298,6 +298,37 @@ async def write(account: str, document: str) -> str:
         # Folder
         path: OldName
 
+    Message — create a DRAFT (# Message without id): the message is
+    stored in the account's Drafts folder with the \\Draft flag, so
+    the user can review, edit and send it from their own mail client
+    (human-in-the-loop alternative to `send`). At least one of
+    to/subject/body is required — partial drafts are fine. Drafts
+    carry NO AI-attribution footer (the user takes authorship by
+    sending), and bcc appears as a real header. The target folder is
+    discovered automatically (SPECIAL-USE / well-known names); an
+    explicit 'folder:' field overrides it. The response echoes the
+    stored draft including its new 'id'.
+
+        # Message
+        to: alice@example.com
+        subject: Quarterly numbers
+        body:
+        > Hi Alice — draft text in **Markdown** …
+
+    Message — replace a draft (# Message with id AND content fields):
+    REPLACE semantics, no field merge — restate the complete draft.
+    The new version is appended first, then the old one is deleted
+    (a failure can leave a duplicate, never a loss). Returns the new
+    draft with its new id.
+
+        # Message
+        id: 17
+        folder: Drafts
+        to: alice@example.com
+        subject: Quarterly numbers (v2)
+        body:
+        > …
+
     Message — update flags:
 
         # Message
@@ -323,6 +354,8 @@ async def write(account: str, document: str) -> str:
     info = _resolve_info(account, document)
     if isinstance(info, str):
         return info
+    acct = _config.resolve(account)
+    drafts_folder = acct.drafts_folder if acct else ""
     try:
         fm = parse_frontmatter(document)
         ignored = check_frontmatter(
@@ -330,7 +363,9 @@ async def write(account: str, document: str) -> str:
         )
         dbg = parse_debug(fm)
         t0 = time.perf_counter()
-        result = await imap_write.write(document, info)
+        result = await imap_write.write(
+            document, info, drafts_folder=drafts_folder,
+        )
         if dbg.active:
             dbg.timing_ms = (
                 (time.perf_counter() - t0) * 1000

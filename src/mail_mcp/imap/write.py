@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""IMAP write routing: folder CRUD, message flags, move, copy."""
+"""IMAP write routing: folder CRUD, message flags, move, copy, drafts."""
 from __future__ import annotations
 
 import imaplib
@@ -7,6 +7,8 @@ import imaplib
 from jmd import JMDParser, jmd_mode, jmd_to_dict, serialize
 
 from mail_mcp._endpoint import ConnectionInfo
+from mail_mcp.imap import draft as imap_draft
+from mail_mcp.imap._append import find_by_message_id
 from mail_mcp.imap._connection import encode_folder, imap_call, open_imap
 from mail_mcp.imap._parse import (
     folder_to_dict,
@@ -19,24 +21,39 @@ from mail_mcp.imap.read import _error, _extract_label
 _LABEL_FOLDER = "Folder"
 _LABEL_MESSAGE = "Message"
 
+# Fields whose presence marks a # Message document as draft content
+# (create without id / replace with id) rather than a flag update.
+_CONTENT_FIELDS = frozenset({
+    "to", "subject", "body", "cc", "bcc", "from-name", "attachments",
+})
+
 
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 
-async def write(document: str, info: ConnectionInfo) -> str:
+async def write(
+    document: str,
+    info: ConnectionInfo,
+    *,
+    drafts_folder: str = "",
+) -> str:
     """Dispatch a JMD data document to the appropriate IMAP write handler.
 
     Routing:
 
     * ``# Folder`` → create or rename folder (``rename-to`` frontmatter)
-    * ``# Message`` → update flags; or move/copy
+    * ``# Message`` without ``id`` → create a draft (APPEND)
+    * ``# Message`` with ``id`` + content fields → replace a draft
+    * ``# Message`` with ``id`` only → update flags; or move/copy
       (``move-to``/``copy-to`` frontmatter)
 
     Args:
         document: JMD data document string.
         info: Resolved connection parameters for this call.
+        drafts_folder: Per-account Drafts folder override from
+            config.jmd (empty = discovery).
 
     Returns:
         JMD response document.
@@ -57,7 +74,9 @@ async def write(document: str, info: ConnectionInfo) -> str:
         case "folder":
             return await _write_folder(document, fm, info)
         case "message":
-            return await _write_message(document, fm, info)
+            return await _write_message(
+                document, fm, info, drafts_folder,
+            )
         case _:
             return _error(
                 400, "unknown_label",
@@ -134,12 +153,27 @@ async def _write_folder(
 # ---------------------------------------------------------------------------
 
 
+def _has_content(fields: dict[str, object]) -> bool:
+    """True when any draft content field is present and non-empty."""
+    for key in _CONTENT_FIELDS:
+        val = fields.get(key)
+        if val is None:
+            continue
+        if isinstance(val, list):
+            if val:
+                return True
+        elif str(val).strip():
+            return True
+    return False
+
+
 async def _write_message(
     document: str,
     fm: dict[str, object],
     info: ConnectionInfo,
+    drafts_folder: str,
 ) -> str:
-    """Update message flags, or move/copy to another folder."""
+    """Create/replace a draft, update flags, or move/copy a message."""
     fields = jmd_to_dict(document)
     if not isinstance(fields, dict):
         return _error(400, "invalid_document", "Expected a Message object")
@@ -147,11 +181,24 @@ async def _write_message(
     uid = str(fields.get("id", "")).strip()
     folder = str(fields.get("folder", "INBOX")).strip()
 
-    if not uid:
-        return _error(400, "missing_fields", "'id' is required")
-
     move_to = str(fm.get("move-to", "")).strip()
     copy_to = str(fm.get("copy-to", "")).strip()
+    has_content = _has_content(fields)
+
+    if has_content and (move_to or copy_to):
+        return _error(
+            400, "bad_request",
+            "content fields cannot be combined with move-to/copy-to",
+        )
+
+    if not uid:
+        # No id → create a draft from the content fields.
+        return await imap_draft.create_draft(
+            fields, info, drafts_folder=drafts_folder,
+        )
+    if has_content:
+        # id + content → replace the draft with this version.
+        return await imap_draft.update_draft(uid, folder, fields, info)
 
     if move_to:
         return await _move_message(uid, folder, move_to, info)
@@ -261,7 +308,7 @@ async def _move_message(
             await imap_call(conn, "expunge")
 
             await imap_call(conn, "select", encoded_dst)
-            new_uid = await _find_by_message_id(conn, message_id)
+            new_uid = await find_by_message_id(conn, message_id)
 
             if new_uid:
                 st3, data3 = await imap_call(
@@ -332,7 +379,7 @@ async def _copy_message(
                 )
 
             await imap_call(conn, "select", encoded_dst)
-            new_uid = await _find_by_message_id(conn, message_id)
+            new_uid = await find_by_message_id(conn, message_id)
 
             if new_uid:
                 st3, data3 = await imap_call(
@@ -356,25 +403,3 @@ async def _copy_message(
         return _error(500, "connection_error", str(exc))
 
 
-async def _find_by_message_id(
-    conn: imaplib.IMAP4,
-    message_id: str | None,
-) -> str | None:
-    """Search for a message by ``Message-ID`` in the selected folder.
-
-    Args:
-        conn: Open, selected IMAP connection.
-        message_id: RFC 2822 ``Message-ID`` value (with angle brackets).
-
-    Returns:
-        UID string, or None if not found.
-    """
-    if not message_id:
-        return None
-    criteria = f'HEADER Message-ID "{message_id}"'
-    status, data = await imap_call(conn, "uid", "SEARCH", criteria)
-    if status == "OK" and data and isinstance(data[0], bytes) and data[0]:
-        uids = data[0].split()
-        if uids:
-            return uids[-1].decode()
-    return None
