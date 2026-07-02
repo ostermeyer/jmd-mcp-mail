@@ -551,6 +551,62 @@ async def test_send_reply_threads_and_defaults_to(
     assert msg["Subject"] == "Re: Zahlen"
 
 
+async def test_send_reply_with_quote(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """quote: true appends the original text below the reply body."""
+    import contextlib
+    from collections.abc import AsyncGenerator
+    from unittest.mock import AsyncMock
+
+    from mail_mcp.imap._thread import OriginalHeaders
+
+    @contextlib.asynccontextmanager
+    async def _fake_open(
+        _info: ConnectionInfo,
+    ) -> AsyncGenerator[MagicMock, None]:
+        yield MagicMock()
+
+    orig = OriginalHeaders(
+        message_id="<orig@example.com>",
+        references="",
+        subject="Zahlen",
+        from_addr="Alice <alice@example.com>",
+        reply_to="",
+        date="Tue, 01 Jul 2026 10:00:00 +0000",
+        body="Originaltext mit Details.",
+    )
+    doc = "in-reply-to: 42\nquote: true\n\n# Message\nbody: Passt!"
+    with (
+        patch.object(smtp, "open_imap", _fake_open),
+        patch.object(
+            smtp, "fetch_original", new=AsyncMock(return_value=orig),
+        ),
+    ):
+        result = await smtp.send(
+            doc, info, imap_info=_imap_info(), store_sent=False,
+        )
+    assert "status: sent" in result
+    _, _, raw = mock_smtp.sendmail.call_args[0]
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    plain = next(
+        p for p in msg.walk() if p.get_content_type() == "text/plain"
+    ).get_content()
+    assert plain.startswith("Passt!")
+    assert "> Originaltext mit Details." in plain
+
+
+async def test_send_quote_without_reply_rejected(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """Quote without in-reply-to is refused before any delivery."""
+    doc = "quote: true\n\n# Message\nto: r@example.com\nsubject: x\nbody: y"
+    result = await smtp.send(doc, info)
+    assert "# Error" in result
+    assert "in-reply-to" in result
+    mock_smtp.sendmail.assert_not_called()
+
+
 async def test_send_reply_without_imap_side_errors(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:

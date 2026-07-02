@@ -43,13 +43,14 @@ _KNOWN_FM_READ: frozenset[str] = frozenset({
 _KNOWN_FM_WRITE: frozenset[str] = frozenset({
     "rename-to", "move-to", "copy-to", "debug",
     "access-token-sealed", "in-reply-to", "in-reply-to-folder",
+    "quote",
 })
 _KNOWN_FM_DELETE: frozenset[str] = frozenset({
     "confirm", "debug", "access-token-sealed",
 })
 _KNOWN_FM_SEND: frozenset[str] = frozenset({
     "debug", "access-token-sealed",
-    "in-reply-to", "in-reply-to-folder",
+    "in-reply-to", "in-reply-to-folder", "quote",
 })
 
 _INSTRUCTIONS = (
@@ -169,6 +170,8 @@ async def read(account: str, document: str) -> str:
         # Message                                   (one message)
         id: 42
         folder: INBOX
+        body-page: 2          (optional; long bodies are paginated)
+        body-page-size: 4000  (optional; 0 = full body, use sparingly)
 
         #? Folder                                   (filter)
         parent: INBOX
@@ -191,6 +194,16 @@ async def read(account: str, document: str) -> str:
     (RFC 5322 header values) for thread inspection. NOTE: these
     read-side fields carry Message-ID strings; the 'in-reply-to'
     FRONTMATTER key on write/send takes an IMAP UID instead.
+
+    Long bodies are PAGINATED, never silently truncated: when a
+    body exceeds one page (default 4000 chars, cut at line
+    boundaries) the response carries 'body-chars' / 'body-pages' /
+    'body-page' alongside the page text. Fetch further pages with a
+    'body-page: N' field; 'body-page-size: 0' returns the full body
+    in one response (use sparingly — it can be huge). To QUOTE a
+    long mail in a reply you usually don't need the text at all:
+    use the write/send 'quote: true' frontmatter instead (the
+    server appends the full original text itself).
 
     Pagination frontmatter (before the #? heading): page, page-size.
     Results are newest-first. `count` switches to COUNT-ONLY mode — the
@@ -391,6 +404,22 @@ async def write(account: str, document: str) -> str:
         body:
         > Got it, thanks!
 
+    Quoting — add 'quote: true' next to 'in-reply-to' and the
+    server appends the original's FULL text below your body as a
+    '> '-quoted block (attribution line + blockquote), entirely
+    server-side. USE THIS instead of reading a long mail just to
+    quote it — the original text never has to enter your context,
+    and the quote is byte-faithful. The echoed response paginates
+    the body (body-chars/body-pages/body-page), so a long quote
+    costs you one page at most.
+
+        in-reply-to: 42
+        quote: true
+
+        # Message
+        body:
+        > Thanks — agreed on all points, see my notes inline below.
+
     Frontmatter policy: observable tolerance — unknown keys are
     echoed in the response as 'ignored-keys: ...'.
     Debug frontmatter: 'debug: timing' (composable).
@@ -525,6 +554,10 @@ async def send(account: str, document: str) -> str:
         # Message
         body:
         > Reply text …
+
+    Add 'quote: true' to also append the original's full text as a
+    '> '-quoted block below your body — server-side, byte-faithful,
+    without reading the (possibly long) original into your context.
 
     TIP — draft instead of send: to let the user review and send the
     mail themselves, create a draft via the `write` tool

@@ -10,6 +10,8 @@
 - **Reply threading** — `in-reply-to: <uid>` frontmatter (+ `in-reply-to-folder:`, default INBOX) on `send` and `write`(draft): the server fetches the original, sets `In-Reply-To`/`References`, prefixes `Re:` and defaults `to` from Reply-To/From. Messages now also *expose* `message-id`/`in-reply-to`/`references` on the read side.
 - **Search** — date criteria `since`/`before`/`on` (ISO in, locale-independent `DD-Mon-YYYY` out), `cc` field, backslash/quote escaping in SEARCH strings, and automatic `SEARCH CHARSET UTF-8` for non-ASCII values.
 - **Incremental flags** — `## flags-add[]` / `## flags-remove[]` (`+FLAGS`/`-FLAGS`) alongside the replace form.
+- **Body pagination** — message bodies are no longer silently truncated at 4000 chars. Past one page (default 4000, cut at line boundaries) responses carry `body-chars`/`body-pages`/`body-page`; further pages via a `body-page: N` field on `# Message` reads, full body via `body-page-size: 0`. Applies to `read` and the draft-echo alike. (Found by a Claude Cowork field test: identical mid-sentence cutoffs on long mails across `read` and the `write` echo.)
+- **Server-side reply quoting** — `quote: true` (with `in-reply-to`) appends the original's full text below the reply body as an attributed `> `-quoted block, composed inside the server: the original never has to travel through the LLM context, and the quote is byte-faithful. Works for drafts and `send`; internal 200k-char mail-size ceiling with an explicit `> […]` marker.
 
 ### Changed
 

@@ -23,6 +23,7 @@ from mail_mcp.imap._special import (
     find_special_folder,
 )
 from mail_mcp.imap._thread import (
+    apply_quote,
     apply_reply_defaults,
     fetch_original,
     reply_headers,
@@ -117,14 +118,21 @@ async def _reply_extras(
     fields: dict[str, object],
     reply_uid: str,
     reply_folder: str,
+    quote: bool,
 ) -> dict[str, str] | str:
     """Fetch the original and derive headers/field defaults.
+
+    With *quote*, the original's full text is appended below the
+    reply body as a ``> ``-quoted block — server-side, so it never
+    has to travel through the LLM context.
 
     Returns:
         The extra headers dict, or a serialized ``# Error`` when the
         original message cannot be found.
     """
-    orig = await fetch_original(conn, reply_folder, reply_uid)
+    orig = await fetch_original(
+        conn, reply_folder, reply_uid, include_body=quote,
+    )
     if orig is None:
         return _error(
             404, "not_found",
@@ -132,6 +140,8 @@ async def _reply_extras(
             "(in-reply-to)",
         )
     apply_reply_defaults(fields, orig)
+    if quote:
+        apply_quote(fields, orig)
     return reply_headers(orig)
 
 
@@ -142,6 +152,7 @@ async def create_draft(
     drafts_folder: str = "",
     reply_uid: str = "",
     reply_folder: str = "INBOX",
+    quote: bool = False,
 ) -> str:
     """Create a draft message via IMAP APPEND.
 
@@ -154,6 +165,8 @@ async def create_draft(
             frontmatter); adds threading headers and fills missing
             ``to``/``subject`` from the original.
         reply_folder: Folder of the original message.
+        quote: Append the original's full text as a quoted block
+            below the reply body (server-side).
 
     Returns:
         JMD ``# Message`` document of the stored draft, or
@@ -164,7 +177,7 @@ async def create_draft(
             extra_headers: dict[str, str] | None = None
             if reply_uid:
                 extras = await _reply_extras(
-                    conn, fields, reply_uid, reply_folder,
+                    conn, fields, reply_uid, reply_folder, quote,
                 )
                 if isinstance(extras, str):
                     return extras
@@ -202,6 +215,7 @@ async def update_draft(
     *,
     reply_uid: str = "",
     reply_folder: str = "INBOX",
+    quote: bool = False,
 ) -> str:
     """Replace a draft: APPEND the new version, delete the old one.
 
@@ -218,6 +232,8 @@ async def update_draft(
         info: Resolved IMAP connection parameters.
         reply_uid: UID of a message being answered (threading).
         reply_folder: Folder of the original message.
+        quote: Append the original's full text as a quoted block
+            below the reply body (server-side).
 
     Returns:
         JMD ``# Message`` document of the new draft, or ``# Error``.
@@ -227,7 +243,7 @@ async def update_draft(
             extra_headers: dict[str, str] | None = None
             if reply_uid:
                 extras = await _reply_extras(
-                    conn, fields, reply_uid, reply_folder,
+                    conn, fields, reply_uid, reply_folder, quote,
                 )
                 if isinstance(extras, str):
                     return extras

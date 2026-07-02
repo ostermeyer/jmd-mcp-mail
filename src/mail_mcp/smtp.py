@@ -30,6 +30,7 @@ from mail_mcp.imap._special import (
     find_special_folder,
 )
 from mail_mcp.imap._thread import (
+    apply_quote,
     apply_reply_defaults,
     fetch_original,
     reply_headers,
@@ -86,6 +87,15 @@ async def send(
     reply_folder = (
         str(fm.get("in-reply-to-folder", "")).strip() or "INBOX"
     )
+    quote = str(fm.get("quote", "")).strip().lower() in (
+        "true", "1", "yes",
+    )
+    if quote and not reply_uid:
+        return _error(
+            400, "bad_request",
+            "'quote' requires an 'in-reply-to' frontmatter key "
+            "naming the message to quote",
+        )
     extra_headers: dict[str, str] | None = None
     if reply_uid:
         if imap_info is None:
@@ -98,6 +108,7 @@ async def send(
             async with open_imap(imap_info) as conn:
                 orig = await fetch_original(
                     conn, reply_folder, reply_uid,
+                    include_body=quote,
                 )
         except (imaplib.IMAP4.error, OSError) as exc:
             return _error(500, "imap_error", str(exc))
@@ -108,6 +119,8 @@ async def send(
                 "(in-reply-to)",
             )
         apply_reply_defaults(fields, orig)
+        if quote:
+            apply_quote(fields, orig)
         extra_headers = reply_headers(orig)
 
     try:

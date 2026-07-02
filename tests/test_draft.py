@@ -205,6 +205,42 @@ async def test_create_reply_draft_threads_and_defaults() -> None:
     assert b"To: alice@example.com" in raw
 
 
+async def test_create_reply_draft_with_quote() -> None:
+    """quote=True appends the original text server-side."""
+    from mail_mcp.imap._thread import OriginalHeaders
+
+    orig = OriginalHeaders(
+        message_id="<orig@example.com>",
+        references="",
+        subject="Zahlen",
+        from_addr="Alice <alice@example.com>",
+        reply_to="",
+        date="Tue, 01 Jul 2026 10:00:00 +0000",
+        body="Sehr langer Originaltext, den das LLM nie sah.",
+    )
+    fetch = AsyncMock(return_value=orig)
+    stack, handles = _patch_draft_io(fetch_original=fetch)
+    with stack:
+        await draft.create_draft(
+            {"body": "Passt!"}, _info(), reply_uid="42", quote=True,
+        )
+    # The original was fetched WITH body...
+    assert fetch.await_args.kwargs["include_body"] is True
+    # ...and its text landed quoted in the appended draft.
+    raw = handles["append_raw"].await_args[0][2]
+    assert b"> Sehr langer Originaltext" in raw
+    assert b"wrote:" in raw
+
+
+async def test_route_quote_without_reply_rejected() -> None:
+    """Quote without in-reply-to is a 400 at the routing layer."""
+    result = await write.write(
+        "quote: true\n\n# Message\nbody: x", _info(),
+    )
+    assert "# Error" in result
+    assert "in-reply-to" in result
+
+
 async def test_create_reply_draft_original_missing() -> None:
     """A vanished original aborts the draft with 404."""
     stack, handles = _patch_draft_io(

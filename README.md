@@ -190,6 +190,8 @@ All four mail tools take `(account, document)` — `account` is a label from `co
 
 `account` = a configured account label (IMAP side). Supports schema (`#! Folder`, `#! Message`), data reads (`# Folder[]`, `# Folder (path: …)`, `# Message (id: …, folder: …)`), and queries (`#? Folder`, `#? Message …`) with pagination (`page`, `page-size`, `count` frontmatter). Message queries filter on `from`/`to`/`cc`/`subject`/`body`, flag booleans (`seen`, `answered`, …) and date criteria `since`/`before`/`on` (ISO dates, server-side arrival date, day granularity). Non-ASCII search values are handled via `SEARCH CHARSET UTF-8` automatically. Messages expose `message-id`/`in-reply-to`/`references` for thread inspection.
 
+Long bodies are **paginated, never silently truncated**: past one page (default 4000 chars, cut at line boundaries) the response carries `body-chars`/`body-pages`/`body-page` next to the page text; further pages via a `body-page: N` field, the whole body via `body-page-size: 0`. To *quote* a long mail in a reply, prefer `quote: true` on `write`/`send` — the server appends the full text itself.
+
 ### `write` — IMAP write
 
 `account` = a configured account label (IMAP side).
@@ -199,6 +201,7 @@ All four mail tools take `(account, document)` — `account` is a label from `co
 - `# Message` **without** `id` — **create a draft**: the message is stored in the Drafts folder with `\Draft`, for the user to finalize and send from their own mail client. At least one of `to`/`subject`/`body`; partial drafts are fine. No AI footer; `bcc` appears as a real header. Target folder: explicit `folder:` field > `drafts-folder` config key > SPECIAL-USE/name discovery.
 - `# Message` with `id` **and** content fields — **replace a draft** (full restate, no field merge; append-then-delete, never a loss).
 - `in-reply-to: <uid>` frontmatter (+ optional `in-reply-to-folder:`, default INBOX) — make the draft a threaded reply: In-Reply-To/References are set, `Re:` prefixed, `to` defaulted from the original.
+- `quote: true` (with `in-reply-to`) — the server appends the original's **full text** below the reply body as a `> `-quoted block with attribution line, entirely server-side: the original never enters the LLM context, and the quote is byte-faithful.
 - `# Message { id, folder, ## flags[] }` — replace message flags; `## flags-add[]` / `## flags-remove[]` change them incrementally (mutually exclusive with the replace form).
 - `move-to: Y` or `copy-to: Y` frontmatter — move/copy a message between folders.
 
@@ -216,6 +219,7 @@ All four mail tools take `(account, document)` — `account` is a label from `co
 
 - **Sent copy** — after successful delivery the exact delivered bytes are stored in the Sent folder (`sent-folder` config key or SPECIAL-USE/name discovery). The response reports `sent-copy: stored | failed | disabled` — a failed copy never means a failed send. Disable with `store-sent: false` (Gmail stores server-side already).
 - **Reply threading** — `in-reply-to: <uid>` frontmatter (+ optional `in-reply-to-folder:`) references the message being answered by its IMAP UID; the server sets In-Reply-To/References, prefixes `Re:` and defaults `to` from the original's Reply-To/From. Note: the *read-side field* `in-reply-to` on a Message is the RFC 5322 Message-ID header — a different plane than this UID-taking frontmatter key.
+- **Server-side quoting** — add `quote: true` and the original's full text is appended below the body as a `> `-quoted block (attribution + blockquote), without the original ever entering the LLM context.
 - Forwarding (`message/rfc822` embedding) is future work — quote the body and re-attach files manually for now.
 
 ### `accounts` — read-only account view

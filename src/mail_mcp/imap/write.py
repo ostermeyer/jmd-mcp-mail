@@ -189,8 +189,17 @@ async def _write_message(
     reply_folder = (
         str(fm.get("in-reply-to-folder", "")).strip() or "INBOX"
     )
+    quote = str(fm.get("quote", "")).strip().lower() in (
+        "true", "1", "yes",
+    )
     has_content = _has_content(fields)
 
+    if quote and not reply_uid:
+        return _error(
+            400, "bad_request",
+            "'quote' requires an 'in-reply-to' frontmatter key "
+            "naming the message to quote",
+        )
     if has_content and (move_to or copy_to):
         return _error(
             400, "bad_request",
@@ -204,6 +213,7 @@ async def _write_message(
             drafts_folder=drafts_folder,
             reply_uid=reply_uid,
             reply_folder=reply_folder,
+            quote=quote,
         )
     if has_content:
         # id + content → replace the draft with this version.
@@ -211,6 +221,7 @@ async def _write_message(
             uid, folder, fields, info,
             reply_uid=reply_uid,
             reply_folder=reply_folder,
+            quote=quote,
         )
 
     if move_to:

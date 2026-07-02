@@ -109,3 +109,86 @@ async def test_fetch_original_missing_returns_none() -> None:
     ):
         orig = await fetch_original(object(), "INBOX", "99")  # type: ignore[arg-type]
     assert orig is None
+
+
+async def test_fetch_original_with_body() -> None:
+    """include_body fetches the full message and extracts the text."""
+    raw = (
+        b"Message-ID: <orig@example.com>\r\n"
+        b"Subject: Long one\r\n"
+        b"From: Alice <alice@example.com>\r\n"
+        b"Date: Tue, 01 Jul 2026 10:00:00 +0000\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n\r\n"
+        b"Zeile eins.\r\nZeile zwei.\r\n"
+    )
+    replies = [
+        ("OK", [b"5 EXISTS"]),
+        ("OK", [(b"1 (UID 42 ...)", raw)]),
+    ]
+    with patch.object(
+        _thread, "imap_call", new=AsyncMock(side_effect=replies),
+    ) as mock_call:
+        orig = await fetch_original(
+            object(), "INBOX", "42", include_body=True,  # type: ignore[arg-type]
+        )
+    assert orig is not None
+    assert "Zeile zwei." in orig.body
+    assert orig.date.startswith("Tue, 01 Jul 2026")
+    # The full body was requested, not just header fields.
+    fetch_args = mock_call.await_args_list[1].args
+    assert "(BODY.PEEK[])" in fetch_args
+
+
+def test_quote_original_format() -> None:
+    """The quote carries an attribution line and > prefixes."""
+    from mail_mcp.imap._thread import quote_original
+
+    orig = _orig()
+    orig.date = "Tue, 01 Jul 2026 10:00:00 +0000"
+    orig.body = "Erste Zeile.\n\nZweite Zeile."
+    quoted = quote_original(orig)
+    lines = quoted.splitlines()
+    assert lines[0] == (
+        "On Tue, 01 Jul 2026 10:00:00 +0000, "
+        "Alice <alice@example.com> wrote:"
+    )
+    assert lines[1] == "> Erste Zeile."
+    assert lines[2] == ">"
+    assert lines[3] == "> Zweite Zeile."
+
+
+def test_quote_original_truncates_huge_bodies() -> None:
+    """Multi-megabyte originals are capped with an explicit marker."""
+    from mail_mcp.imap._thread import _QUOTE_MAX_CHARS, quote_original
+
+    orig = _orig()
+    orig.body = "Zeile.\n" * (_QUOTE_MAX_CHARS // 4)
+    quoted = quote_original(orig)
+    assert quoted.endswith("> […]")
+    # The cap applies to the raw body; "> " prefixes add ~2 chars
+    # per line on top, so allow generous headroom.
+    assert len(quoted) < _QUOTE_MAX_CHARS * 1.5
+
+
+def test_apply_quote_top_posts() -> None:
+    """The reply body stays on top, the quote goes below."""
+    from mail_mcp.imap._thread import apply_quote
+
+    orig = _orig()
+    orig.body = "Originaltext."
+    fields: dict[str, object] = {"body": "Meine Antwort."}
+    apply_quote(fields, orig)
+    body = str(fields["body"])
+    assert body.startswith("Meine Antwort.\n\n")
+    assert "> Originaltext." in body
+
+
+def test_apply_quote_without_own_body() -> None:
+    """A quote-only reply (empty body) is just the quoted block."""
+    from mail_mcp.imap._thread import apply_quote
+
+    orig = _orig()
+    orig.body = "Originaltext."
+    fields: dict[str, object] = {}
+    apply_quote(fields, orig)
+    assert str(fields["body"]).endswith("> Originaltext.")
