@@ -118,6 +118,47 @@ def test_projection_hides_username_and_endpoints() -> None:
     assert "secret@ionos.de" not in str(proj)
 
 
+def test_folder_keys_default() -> None:
+    """Without folder keys, discovery defaults apply."""
+    _write_config(_BASIC)
+    acc = _config.resolve("ionos")
+    assert acc is not None
+    assert acc.drafts_folder == ""
+    assert acc.sent_folder == ""
+    assert acc.store_sent is True
+
+
+def test_folder_keys_parsed() -> None:
+    """drafts-folder / sent-folder / store-sent are picked up."""
+    _write_config(
+        _BASIC.rstrip()
+        + "\n  drafts-folder: Entwürfe"
+        + "\n  sent-folder: Gesendete Objekte"
+        + "\n  store-sent: false\n"
+    )
+    acc = _config.resolve("ionos")
+    assert acc is not None
+    assert acc.drafts_folder == "Entwürfe"
+    assert acc.sent_folder == "Gesendete Objekte"
+    assert acc.store_sent is False
+
+
+def test_store_sent_bad_value_rejected() -> None:
+    """A non-boolean store-sent is refused at load time."""
+    _write_config(_BASIC.rstrip() + "\n  store-sent: maybe\n")
+    with pytest.raises(ValueError, match="boolean"):
+        _config.load()
+
+
+def test_projection_excludes_folder_keys() -> None:
+    """The LLM-facing projection never exposes folder names."""
+    proj = _config.projection(Account(
+        "ionos", "imap.ionos.de:993", "smtp.ionos.de:587",
+        "a@b.de", drafts_folder="Entwürfe", sent_folder="Gesendet",
+    ))
+    assert proj == {"label": "ionos"}
+
+
 def test_migration_from_legacy(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

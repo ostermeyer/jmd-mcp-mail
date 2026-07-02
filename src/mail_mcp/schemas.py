@@ -68,7 +68,10 @@ smtp: string readonly
 username: string email readonly
 auth: string optional
 broker-client: string optional
-from-name: string readonly optional"""
+from-name: string readonly optional
+drafts-folder: string readonly optional
+sent-folder: string readonly optional
+store-sent: boolean readonly optional"""
 
 PUBLIC_KEY: str = """\
 #! PublicKey

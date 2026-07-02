@@ -22,6 +22,9 @@ The file is the canonical ``# Account[]`` array-of-objects form::
       auth: basic              # basic | oauth2
       broker-client: outlook   # only for auth: oauth2
       from-name: Andreas O.    # optional From-header display name
+      drafts-folder: Entwürfe  # optional; else SPECIAL-USE/name lookup
+      sent-folder: Gesendet    # optional; else SPECIAL-USE/name lookup
+      store-sent: true         # optional; false for Gmail (auto-stores)
 """
 from __future__ import annotations
 
@@ -53,6 +56,12 @@ class Account:
         auth: ``basic`` (keystore password) or ``oauth2`` (sealed token).
         broker_client: For ``oauth2``, the jmd-mcp-oauth2 client name.
         from_name: Optional default display name for the From header.
+        drafts_folder: Optional explicit Drafts folder path; empty
+            means SPECIAL-USE / well-known-name discovery.
+        sent_folder: Optional explicit Sent folder path; empty means
+            SPECIAL-USE / well-known-name discovery.
+        store_sent: Store a copy of sent mail in the Sent folder.
+            Set ``false`` for providers that auto-store (Gmail).
     """
 
     label: str
@@ -62,6 +71,9 @@ class Account:
     auth: str = "basic"
     broker_client: str = ""
     from_name: str = ""
+    drafts_folder: str = ""
+    sent_folder: str = ""
+    store_sent: bool = True
 
 
 def config_dir() -> Path:
@@ -102,6 +114,24 @@ def _validate(account: Account) -> None:
     parse_endpoint(account.smtp)
 
 
+def _as_bool(value: Any, *, default: bool) -> bool:
+    """Coerce a JMD scalar (bool or string) to a bool.
+
+    Raises:
+        ValueError: If the value is not recognizably boolean.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "yes", "1"):
+        return True
+    if text in ("false", "no", "0"):
+        return False
+    raise ValueError(f"expected a boolean, got {value!r}")
+
+
 def _account_from_dict(item: dict[str, Any]) -> Account:
     """Build and validate an Account from a parsed config entry."""
     try:
@@ -113,6 +143,9 @@ def _account_from_dict(item: dict[str, Any]) -> Account:
             auth=str(item.get("auth", "basic")),
             broker_client=str(item.get("broker-client", "")),
             from_name=str(item.get("from-name", "")),
+            drafts_folder=str(item.get("drafts-folder", "")),
+            sent_folder=str(item.get("sent-folder", "")),
+            store_sent=_as_bool(item.get("store-sent"), default=True),
         )
     except KeyError as exc:
         raise ValueError(

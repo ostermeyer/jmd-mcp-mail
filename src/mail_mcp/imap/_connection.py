@@ -90,6 +90,10 @@ def encode_folder(path: str) -> str:
         Properly encoded IMAP mailbox string, quoted if necessary.
     """
     encoded = utf7_encode(path).decode("ascii")
-    if " " in encoded or not encoded:
-        return f'"{encoded}"'
+    # Quote on any IMAP atom-special, not just spaces — real-world
+    # paths like [Gmail]/Drafts contain brackets and would otherwise
+    # be sent as unquoted atoms.
+    if not encoded or any(c in encoded for c in ' (){%*"\\[]'):
+        escaped = encoded.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
     return encoded
