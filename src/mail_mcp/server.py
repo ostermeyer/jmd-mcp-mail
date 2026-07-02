@@ -176,8 +176,16 @@ async def read(account: str, document: str) -> str:
         #? Message                                  (filter)
         folder: INBOX
         from: ~alice
+        cc: ~bob
         subject: ~invoice
         seen: false
+        since: 2026-06-01
+        before: 2026-07-01
+
+    Date criteria (since / before / on) take ISO dates (YYYY-MM-DD)
+    and compare the server-side arrival date at day granularity —
+    since is inclusive, before exclusive. Non-ASCII search values
+    (umlauts etc.) are handled automatically via CHARSET UTF-8.
 
     Pagination frontmatter (before the #? heading): page, page-size.
     Results are newest-first. `count` switches to COUNT-ONLY mode — the

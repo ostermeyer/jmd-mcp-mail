@@ -320,13 +320,23 @@ async def _query_messages(document: str, info: ConnectionInfo) -> str:
         if f.key == "folder" and f.condition.values:
             folder = str(f.condition.values[0])
 
-    criteria = build_criteria(query.fields)
+    criteria, needs_utf8 = build_criteria(query.fields)
     encoded = encode_folder(folder)
 
     try:
         async with open_imap(info) as conn:
             await imap_call(conn, "select", encoded, True)
-            status, data = await imap_call(conn, "uid", "SEARCH", criteria)
+            # Non-ASCII search values need CHARSET UTF-8 and must be
+            # passed as bytes (imaplib ASCII-encodes str arguments).
+            if needs_utf8:
+                status, data = await imap_call(
+                    conn, "uid", "SEARCH", "CHARSET", "UTF-8",
+                    criteria.encode("utf-8"),
+                )
+            else:
+                status, data = await imap_call(
+                    conn, "uid", "SEARCH", criteria,
+                )
             if status != "OK":
                 return _error(500, "imap_error", "SEARCH failed")
 
