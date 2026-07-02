@@ -59,6 +59,9 @@ class MessageRecord:
     size: int
     body: str
     attachments: list[AttachmentRecord]
+    message_id: str = ""
+    in_reply_to: str = ""
+    references: str = ""
 
 
 @dataclasses.dataclass(slots=True)
@@ -413,6 +416,11 @@ def parse_message(
         size=size,
         body=body,
         attachments=attachments,
+        message_id=str(msg.get("Message-ID") or "").strip(),
+        in_reply_to=str(msg.get("In-Reply-To") or "").strip(),
+        references=" ".join(
+            str(msg.get("References") or "").split()
+        ),
     )
 
 
@@ -460,6 +468,12 @@ def message_to_dict(rec: MessageRecord) -> dict[str, object]:
     }
     if rec.size:
         d["size"] = rec.size
+    if rec.message_id:
+        d["message-id"] = rec.message_id
+    if rec.in_reply_to:
+        d["in-reply-to"] = rec.in_reply_to
+    if rec.references:
+        d["references"] = rec.references
     if rec.body:
         d["body"] = rec.body
     if rec.flags:

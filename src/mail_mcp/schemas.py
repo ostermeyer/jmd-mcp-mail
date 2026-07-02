@@ -38,6 +38,9 @@ mailbox: string optional
 subject: string readonly
 date: string datetime readonly
 size: integer readonly optional
+message-id: string readonly optional
+in-reply-to: string readonly optional
+references: string readonly optional
 body: string optional
 
 ## from: EmailAddress readonly

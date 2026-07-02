@@ -168,6 +168,44 @@ def test_parse_message_full_body() -> None:
     assert "Hello from plain text" in rec.body
 
 
+def test_parse_message_threading_headers() -> None:
+    """Message-ID, In-Reply-To and References are captured."""
+    msg = MIMEMultipart()
+    msg["From"] = "sender@example.com"
+    msg["To"] = "user@example.com"
+    msg["Subject"] = "Re: Thread"
+    msg["Message-ID"] = "<reply@example.com>"
+    msg["In-Reply-To"] = "<orig@example.com>"
+    msg["References"] = "<root@example.com>\r\n <orig@example.com>"
+    msg.attach(MIMEText("x", "plain", "utf-8"))
+    rec = parse_message("7", msg.as_bytes(), "INBOX")
+    assert rec.message_id == "<reply@example.com>"
+    assert rec.in_reply_to == "<orig@example.com>"
+    # Folded header whitespace is normalized to single spaces.
+    assert rec.references == "<root@example.com> <orig@example.com>"
+
+
+def test_parse_message_no_threading_headers() -> None:
+    """Absent threading headers yield empty strings."""
+    rec = parse_message("8", _make_raw("S", "b"), "INBOX")
+    assert rec.message_id == ""
+    assert rec.in_reply_to == ""
+    assert rec.references == ""
+
+
+def test_message_to_dict_threading_keys() -> None:
+    """message_to_dict emits threading keys only when present."""
+    rec = parse_message("9", _make_raw("S", "b"), "INBOX")
+    assert "message-id" not in message_to_dict(rec)
+    rec.message_id = "<m@example.com>"
+    rec.in_reply_to = "<o@example.com>"
+    rec.references = "<r@example.com>"
+    d = message_to_dict(rec)
+    assert d["message-id"] == "<m@example.com>"
+    assert d["in-reply-to"] == "<o@example.com>"
+    assert d["references"] == "<r@example.com>"
+
+
 # ---------------------------------------------------------------------------
 # Serialization helpers
 # ---------------------------------------------------------------------------
