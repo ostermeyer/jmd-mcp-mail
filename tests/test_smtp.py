@@ -67,34 +67,34 @@ def mock_smtp_ssl() -> Generator[MagicMock, None, None]:
 # ---------------------------------------------------------------------------
 
 
-def test_send_missing_to(info: ConnectionInfo) -> None:
+async def test_send_missing_to(info: ConnectionInfo) -> None:
     """Missing ``to`` field returns 400 error."""
-    result = smtp.send("# Message\nsubject: Hi\nbody: Text", info)
+    result = await smtp.send("# Message\nsubject: Hi\nbody: Text", info)
     assert "# Error" in result
     assert "400" in result
 
 
-def test_send_missing_subject(info: ConnectionInfo) -> None:
+async def test_send_missing_subject(info: ConnectionInfo) -> None:
     """Missing ``subject`` field returns 400 error."""
-    result = smtp.send(
+    result = await smtp.send(
         "# Message\nto: r@example.com\nbody: Text", info,
     )
     assert "# Error" in result
     assert "400" in result
 
 
-def test_send_missing_body(info: ConnectionInfo) -> None:
+async def test_send_missing_body(info: ConnectionInfo) -> None:
     """Missing ``body`` field returns 400 error."""
-    result = smtp.send(
+    result = await smtp.send(
         "# Message\nto: r@example.com\nsubject: Hi", info,
     )
     assert "# Error" in result
     assert "400" in result
 
 
-def test_send_invalid_mode(info: ConnectionInfo) -> None:
+async def test_send_invalid_mode(info: ConnectionInfo) -> None:
     """Query document passed to ``send`` returns 400 invalid_mode."""
-    result = smtp.send("#? Message\nto: r@example.com", info)
+    result = await smtp.send("#? Message\nto: r@example.com", info)
     assert "# Error" in result
     assert "invalid_mode" in result
 
@@ -104,7 +104,7 @@ def test_send_invalid_mode(info: ConnectionInfo) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_send_starttls_calls_starttls(
+async def test_send_starttls_calls_starttls(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
     """STARTTLS path invokes ``conn.starttls()`` before login."""
@@ -114,14 +114,14 @@ def test_send_starttls_calls_starttls(
         "subject: Hello\n"
         "body: Test message"
     )
-    result = smtp.send(doc, info)
+    result = await smtp.send(doc, info)
     assert "# Message" in result
     assert "sent" in result
     mock_smtp.starttls.assert_called_once()
     mock_smtp.sendmail.assert_called_once()
 
 
-def test_send_includes_cc_in_recipients(
+async def test_send_includes_cc_in_recipients(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
     """CC recipients are included in the ``sendmail`` envelope."""
@@ -132,12 +132,12 @@ def test_send_includes_cc_in_recipients(
         "subject: Hi\n"
         "body: Body"
     )
-    smtp.send(doc, info)
+    await smtp.send(doc, info)
     _, recipients, _ = mock_smtp.sendmail.call_args[0]
     assert "cc@example.com" in recipients
 
 
-def test_send_bcc_not_in_headers(
+async def test_send_bcc_not_in_headers(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
     """BCC recipients are envelope-only, not in message headers."""
@@ -148,7 +148,7 @@ def test_send_bcc_not_in_headers(
         "subject: Hi\n"
         "body: Body"
     )
-    smtp.send(doc, info)
+    await smtp.send(doc, info)
     _, recipients, raw = mock_smtp.sendmail.call_args[0]
     assert "secret@example.com" in recipients
     assert b"secret@example.com" not in raw
@@ -159,7 +159,7 @@ def test_send_bcc_not_in_headers(
 # ---------------------------------------------------------------------------
 
 
-def test_send_smtps_uses_smtp_ssl(
+async def test_send_smtps_uses_smtp_ssl(
     info_smtps: ConnectionInfo, mock_smtp_ssl: MagicMock,
 ) -> None:
     """Implicit-TLS path opens ``SMTP_SSL`` and skips STARTTLS."""
@@ -169,7 +169,7 @@ def test_send_smtps_uses_smtp_ssl(
         "subject: Hi\n"
         "body: Body"
     )
-    result = smtp.send(doc, info_smtps)
+    result = await smtp.send(doc, info_smtps)
     assert "sent" in result
     mock_smtp_ssl.starttls.assert_not_called()
     mock_smtp_ssl.sendmail.assert_called_once()
@@ -180,7 +180,7 @@ def test_send_smtps_uses_smtp_ssl(
 # ---------------------------------------------------------------------------
 
 
-def test_send_auth_failure(info: ConnectionInfo) -> None:
+async def test_send_auth_failure(info: ConnectionInfo) -> None:
     """``SMTPAuthenticationError`` returns 401 error document."""
     with patch("mail_mcp.smtp.smtplib.SMTP") as mock_cls:
         mock_conn = MagicMock()
@@ -189,7 +189,7 @@ def test_send_auth_failure(info: ConnectionInfo) -> None:
         )
         mock_cls.return_value.__enter__.return_value = mock_conn
         mock_cls.return_value.__exit__.return_value = False
-        result = smtp.send(
+        result = await smtp.send(
             "# Message\nto: r@example.com\nsubject: Hi\nbody: Text",
             info,
         )
@@ -197,7 +197,7 @@ def test_send_auth_failure(info: ConnectionInfo) -> None:
     assert "401" in result
 
 
-def test_send_recipients_refused(info: ConnectionInfo) -> None:
+async def test_send_recipients_refused(info: ConnectionInfo) -> None:
     """``SMTPRecipientsRefused`` returns 400 error document."""
     with patch("mail_mcp.smtp.smtplib.SMTP") as mock_cls:
         mock_conn = MagicMock()
@@ -206,7 +206,7 @@ def test_send_recipients_refused(info: ConnectionInfo) -> None:
         )
         mock_cls.return_value.__enter__.return_value = mock_conn
         mock_cls.return_value.__exit__.return_value = False
-        result = smtp.send(
+        result = await smtp.send(
             "# Message\nto: r@example.com\nsubject: Hi\nbody: Text",
             info,
         )
@@ -219,7 +219,7 @@ def test_send_recipients_refused(info: ConnectionInfo) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_send_does_not_pre_escape_leading_dots(
+async def test_send_does_not_pre_escape_leading_dots(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
     """Leading dots stay literal; smtplib does the SMTP dot-stuffing.
@@ -239,7 +239,7 @@ def test_send_does_not_pre_escape_leading_dots(
         "> normale Zeile\n"
         "> .com-fuehrender-punkt"
     )
-    smtp.send(doc, info)
+    await smtp.send(doc, info)
     _, _, raw = mock_smtp.sendmail.call_args[0]
     assert b"=2E" not in raw
     # The leading-dot text is present (decoded), not rewritten.
@@ -255,7 +255,7 @@ def test_send_does_not_pre_escape_leading_dots(
 # ---------------------------------------------------------------------------
 
 
-def test_send_nonascii_uses_quoted_printable_not_8bit(
+async def test_send_nonascii_uses_quoted_printable_not_8bit(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
     """Non-ASCII parts are quoted-printable, never raw 8bit.
@@ -270,7 +270,7 @@ def test_send_nonascii_uses_quoted_printable_not_8bit(
         "subject: Hi\n"
         "body: Pfeil → Umlaut ä"
     )
-    smtp.send(doc, info)
+    await smtp.send(doc, info)
     _, _, raw = mock_smtp.sendmail.call_args[0]
     assert b"Content-Transfer-Encoding: 8bit" not in raw
     assert b"quoted-printable" in raw
@@ -278,7 +278,7 @@ def test_send_nonascii_uses_quoted_printable_not_8bit(
     assert "→".encode() not in raw
 
 
-def test_send_nonascii_roundtrips_in_both_parts(
+async def test_send_nonascii_roundtrips_in_both_parts(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
     """Decoded plain and HTML parts both preserve non-ASCII characters."""
@@ -288,7 +288,7 @@ def test_send_nonascii_roundtrips_in_both_parts(
         "subject: Hi\n"
         "body: Pfeil → Umlaute äöü"
     )
-    smtp.send(doc, info)
+    await smtp.send(doc, info)
     _, _, raw = mock_smtp.sendmail.call_args[0]
     msg = email.message_from_bytes(raw, policy=email.policy.default)
     for ctype in ("text/plain", "text/html"):
@@ -301,7 +301,7 @@ def test_send_nonascii_roundtrips_in_both_parts(
         assert "äöü" in content
 
 
-def test_send_long_line_uses_crlf_soft_breaks(
+async def test_send_long_line_uses_crlf_soft_breaks(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
     r"""Long lines wrap with CRLF QP soft-breaks, never bare LF.
@@ -319,7 +319,7 @@ def test_send_long_line_uses_crlf_soft_breaks(
         "subject: Hi\n"
         f"body: {body}"
     )
-    smtp.send(doc, info)
+    await smtp.send(doc, info)
     _, _, raw = mock_smtp.sendmail.call_args[0]
     # QP soft-breaks are present (long line) and all CRLF, none bare-LF.
     assert b"=\r\n" in raw
@@ -332,7 +332,7 @@ def test_send_long_line_uses_crlf_soft_breaks(
     assert marker in html
 
 
-def test_send_html_renders_ordered_and_unordered_lists(
+async def test_send_html_renders_ordered_and_unordered_lists(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
     """A numbered list and a bullet list render as separate <ol>/<ul>."""
@@ -347,7 +347,7 @@ def test_send_html_renders_ordered_and_unordered_lists(
         "> - a\n"
         "> - b"
     )
-    smtp.send(doc, info)
+    await smtp.send(doc, info)
     _, _, raw = mock_smtp.sendmail.call_args[0]
     msg = email.message_from_bytes(raw, policy=email.policy.default)
     html_part = next(
@@ -363,7 +363,7 @@ def test_send_html_renders_ordered_and_unordered_lists(
 # ---------------------------------------------------------------------------
 
 
-def test_send_from_name_sets_display_name(
+async def test_send_from_name_sets_display_name(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
     """'from-name' produces a 'Name <addr>' From header."""
@@ -374,7 +374,7 @@ def test_send_from_name_sets_display_name(
         "from-name: Andreas Ostermeyer\n"
         "body: Text"
     )
-    smtp.send(doc, info)
+    await smtp.send(doc, info)
     envelope_from, _, raw = mock_smtp.sendmail.call_args[0]
     # Envelope sender stays the bare address — only the header changes.
     assert envelope_from == "user@example.com"
@@ -382,7 +382,7 @@ def test_send_from_name_sets_display_name(
     assert msg["From"] == "Andreas Ostermeyer <user@example.com>"
 
 
-def test_send_without_from_name_uses_bare_address(
+async def test_send_without_from_name_uses_bare_address(
     info: ConnectionInfo, mock_smtp: MagicMock,
 ) -> None:
     """Omitting 'from-name' leaves the From header as the bare address."""
@@ -392,7 +392,7 @@ def test_send_without_from_name_uses_bare_address(
         "subject: Hi\n"
         "body: Text"
     )
-    smtp.send(doc, info)
+    await smtp.send(doc, info)
     _, _, raw = mock_smtp.sendmail.call_args[0]
     msg = email.message_from_bytes(raw, policy=email.policy.default)
     assert msg["From"] == "user@example.com"

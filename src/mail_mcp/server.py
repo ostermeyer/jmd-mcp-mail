@@ -402,7 +402,7 @@ async def delete(account: str, document: str) -> str:
 
 
 @mcp.tool()
-def send(account: str, document: str) -> str:
+async def send(account: str, document: str) -> str:
     """Send an email via SMTP using a JMD Message document (https://github.com/ostermeyer/jmd-spec).
 
     Args:
@@ -449,7 +449,7 @@ def send(account: str, document: str) -> str:
         info = _resolve_info(account, document, smtp=True)
         if isinstance(info, str):
             return info
-        result = smtp.send(document, info)
+        result = await smtp.send(document, info)
         if dbg.active:
             dbg.timing_ms = (
                 (time.perf_counter() - t0) * 1000

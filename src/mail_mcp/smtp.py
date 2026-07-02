@@ -12,6 +12,7 @@ which derives it from the port (see ``_endpoint``).
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import smtplib
 
@@ -23,8 +24,11 @@ from mail_mcp._endpoint import ConnectionInfo, TlsMode, xoauth2_string
 _LABEL = "Message"
 
 
-def send(document: str, info: ConnectionInfo) -> str:
+async def send(document: str, info: ConnectionInfo) -> str:
     """Send an email described by a JMD Message document.
+
+    The blocking ``smtplib`` delivery runs via ``asyncio.to_thread``
+    so the event loop is never blocked.
 
     Args:
         document: JMD data document with ``to``, ``subject``, ``body``
@@ -65,7 +69,9 @@ def send(document: str, info: ConnectionInfo) -> str:
     )
 
     try:
-        _deliver(info, all_recipients, result.raw_bytes)
+        await asyncio.to_thread(
+            _deliver, info, all_recipients, result.raw_bytes,
+        )
     except smtplib.SMTPAuthenticationError as exc:
         err_msg = (
             exc.smtp_error.decode()
