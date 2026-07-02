@@ -187,6 +187,11 @@ async def read(account: str, document: str) -> str:
     since is inclusive, before exclusive. Non-ASCII search values
     (umlauts etc.) are handled automatically via CHARSET UTF-8.
 
+    Messages expose 'message-id', 'in-reply-to' and 'references'
+    (RFC 5322 header values) for thread inspection. NOTE: these
+    read-side fields carry Message-ID strings; the 'in-reply-to'
+    FRONTMATTER key on write/send takes an IMAP UID instead.
+
     Pagination frontmatter (before the #? heading): page, page-size.
     Results are newest-first. `count` switches to COUNT-ONLY mode — the
     response is just `total: N` with an empty list (no message items);
@@ -308,7 +313,7 @@ async def write(account: str, document: str) -> str:
         path: OldName
 
     Message — create a DRAFT (# Message without id): the message is
-    stored in the account's Drafts folder with the \\Draft flag, so
+    stored in the account's Drafts folder with the \Draft flag, so
     the user can review, edit and send it from their own mail client
     (human-in-the-loop alternative to `send`). At least one of
     to/subject/body is required — partial drafts are fine. Drafts
@@ -606,6 +611,11 @@ def accounts(document: str) -> str:
     imap.gmail.com:993 + smtp.gmail.com:587 (App Password), outlook/365 →
     outlook.office365.com:993 + smtp-mail.outlook.com:587 (oauth2),
     ionos.de → imap.ionos.de:993 + smtp.ionos.de:587.
+
+    Optional per-account keys worth suggesting: ``drafts-folder`` /
+    ``sent-folder`` (explicit folder paths when SPECIAL-USE discovery
+    picks wrong) and ``store-sent: false`` for Gmail (which stores
+    sent mail server-side — avoids duplicates).
     """
     try:
         return accounts_module.handle(document)
