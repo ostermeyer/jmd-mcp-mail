@@ -14,6 +14,9 @@ from mail_mcp._endpoint import ConnectionInfo
 from mail_mcp.imap._connection import encode_folder, imap_call, open_imap
 from mail_mcp.imap._criteria import build as build_criteria
 from mail_mcp.imap._parse import (
+    BODY_PAGE_SIZE as _BODY_PAGE_SIZE,
+)
+from mail_mcp.imap._parse import (
     FolderRecord,
     extract_uid,
     folder_to_dict,
@@ -246,6 +249,16 @@ async def _read_message(document: str, info: ConnectionInfo) -> str:
 
     uid = str(fields.get("id", "")).strip()
     folder = str(fields.get("folder", "INBOX")).strip()
+    try:
+        body_page = int(str(fields.get("body-page", 1)))
+        body_page_size = int(
+            str(fields.get("body-page-size", _BODY_PAGE_SIZE))
+        )
+    except ValueError:
+        return _error(
+            400, "bad_request",
+            "'body-page' and 'body-page-size' must be integers",
+        )
     download = bool(fields.get("download", False))
     path_raw = str(fields.get("path", "")).strip()
     download_dest: Path | None = None
@@ -273,7 +286,12 @@ async def _read_message(document: str, info: ConnectionInfo) -> str:
                         )
                     rec = parse_message(uid, raw, folder, download_dest)
                     return serialize(
-                        message_to_dict(rec), label=_LABEL_MESSAGE
+                        message_to_dict(
+                            rec,
+                            body_page=body_page,
+                            body_page_size=body_page_size,
+                        ),
+                        label=_LABEL_MESSAGE,
                     )
                 case _:
                     return _error(

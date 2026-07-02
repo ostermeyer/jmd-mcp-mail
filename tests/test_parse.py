@@ -15,6 +15,7 @@ from mail_mcp.imap._parse import (
     extract_uid,
     folder_to_dict,
     message_to_dict,
+    paginate_body,
     parse_list_item,
     parse_message,
 )
@@ -191,6 +192,70 @@ def test_parse_message_no_threading_headers() -> None:
     assert rec.message_id == ""
     assert rec.in_reply_to == ""
     assert rec.references == ""
+
+
+def test_extract_body_not_capped() -> None:
+    """Long bodies survive parsing in full (no silent 4000 cap)."""
+    long_body = "Zeile mit Inhalt.\n" * 500  # ~9000 chars
+    rec = parse_message("10", _make_raw("S", long_body), "INBOX")
+    assert len(rec.body) > 8000
+
+
+def test_paginate_body_single_page() -> None:
+    """Short bodies are one page, no matter the page size."""
+    text, pages, total = paginate_body("short", 1, 4000)
+    assert (text, pages, total) == ("short", 1, 5)
+
+
+def test_paginate_body_cuts_at_line_boundary() -> None:
+    """Pages end at a newline, not mid-line."""
+    body = "\n".join(f"line {i:04d}" for i in range(1000))
+    page1, pages, total = paginate_body(body, 1, 4000)
+    assert pages > 1
+    assert total == len(body)
+    assert page1.endswith("\n")
+    # Page 2 starts exactly where page 1 ended.
+    page2, _, _ = paginate_body(body, 2, 4000)
+    assert body.startswith(page1 + page2[: len(page2)])
+
+
+def test_paginate_body_page_clamped() -> None:
+    """Out-of-range pages clamp to the last page."""
+    body = "x\n" * 5000
+    last, pages, _ = paginate_body(body, 999, 4000)
+    expected, _, _ = paginate_body(body, pages, 4000)
+    assert last == expected
+
+
+def test_paginate_body_zero_disables() -> None:
+    """page_size 0 returns the full text as one page."""
+    body = "y" * 10000
+    text, pages, total = paginate_body(body, 1, 0)
+    assert text == body
+    assert pages == 1
+    assert total == 10000
+
+
+def test_message_to_dict_paginates_long_body() -> None:
+    """Long bodies emit page 1 plus pagination metadata."""
+    long_body = "\n".join(f"Zeile {i:04d} mit Inhalt." for i in range(400))
+    rec = parse_message("11", _make_raw("S", long_body), "INBOX")
+    d = message_to_dict(rec)
+    assert d["body-pages"] == 3
+    assert d["body-page"] == 1
+    assert d["body-chars"] == len(rec.body)
+    assert len(str(d["body"])) <= 4000
+    d2 = message_to_dict(rec, body_page=2)
+    assert d2["body-page"] == 2
+    assert d2["body"] != d["body"]
+
+
+def test_message_to_dict_short_body_no_meta() -> None:
+    """Single-page bodies carry no pagination noise."""
+    rec = parse_message("12", _make_raw("S", "kurz"), "INBOX")
+    d = message_to_dict(rec)
+    assert "body-pages" not in d
+    assert "body-chars" not in d
 
 
 def test_message_to_dict_threading_keys() -> None:

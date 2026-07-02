@@ -31,6 +31,9 @@ message-id: string readonly optional
 in-reply-to: string readonly optional
 references: string readonly optional
 body: string optional
+body-chars: integer readonly optional
+body-pages: integer readonly optional
+body-page: integer readonly optional
 
 ## from: EmailAddress readonly
 ## to[]: EmailAddress readonly

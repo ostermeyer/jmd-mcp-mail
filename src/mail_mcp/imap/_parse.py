@@ -262,11 +262,16 @@ def _xdg_download_dir() -> Path:
 def _extract_body(msg: email.message.Message) -> str:
     """Extract plain-text body, converting HTML to Markdown if needed.
 
+    Returns the FULL body — response-size protection is pagination
+    at serialization time (:func:`paginate_body`), not truncation
+    here.  Server-internal consumers (reply quoting) need the whole
+    text.
+
     Args:
         msg: Parsed email.message.Message object.
 
     Returns:
-        Plain text body (max 4000 chars), stripped.
+        Plain text body, stripped.
     """
     plain = ""
     html_raw: bytes | None = None
@@ -299,15 +304,58 @@ def _extract_body(msg: email.message.Message) -> str:
                 )
 
     if plain:
-        return plain.strip()[:4000]
+        return plain.strip()
     if html_raw is not None:
         html_str = html_raw.decode(html_charset or "utf-8", errors="replace")
         return markdownify.markdownify(
             html_str,
             heading_style="ATX",
             strip=["table", "thead", "tbody", "tr", "th", "td"],
-        ).strip()[:4000]
+        ).strip()
     return ""
+
+
+# Default characters per body page in tool responses.  Protects the
+# LLM context from multi-megabyte bodies; further pages are fetched
+# explicitly via the `body-page` field.
+BODY_PAGE_SIZE = 4000
+
+
+def paginate_body(
+    text: str,
+    page: int,
+    page_size: int,
+) -> tuple[str, int, int]:
+    """Slice a body into pages, cutting at line boundaries.
+
+    Args:
+        text: Full body text.
+        page: 1-based page number (clamped into range).
+        page_size: Characters per page; ``0`` disables pagination
+            (the full text is one page).
+
+    Returns:
+        ``(page_text, pages, total_chars)``.
+    """
+    total = len(text)
+    if page_size <= 0 or total <= page_size:
+        return text, 1, total
+    slices: list[tuple[int, int]] = []
+    pos = 0
+    while pos < total:
+        end = min(pos + page_size, total)
+        if end < total:
+            # Prefer a line boundary; fall back to a hard cut when
+            # the page is one giant line.
+            nl = text.rfind("\n", pos, end)
+            if nl > pos:
+                end = nl + 1
+        slices.append((pos, end))
+        pos = end
+    pages = len(slices)
+    idx = min(max(page, 1), pages) - 1
+    start, end = slices[idx]
+    return text[start:end], pages, total
 
 
 # ---------------------------------------------------------------------------
@@ -451,11 +499,23 @@ def attachment_to_dict(rec: AttachmentRecord) -> dict[str, object]:
     return d
 
 
-def message_to_dict(rec: MessageRecord) -> dict[str, object]:
+def message_to_dict(
+    rec: MessageRecord,
+    *,
+    body_page: int = 1,
+    body_page_size: int = BODY_PAGE_SIZE,
+) -> dict[str, object]:
     """Convert a MessageRecord to a JMD-serializable dict.
+
+    Long bodies are paginated, never silently truncated: when the
+    body spans more than one page, the requested page is emitted
+    along with ``body-chars`` / ``body-pages`` / ``body-page`` so
+    the caller knows exactly what it got and how to fetch the rest.
 
     Args:
         rec: Parsed message record.
+        body_page: 1-based body page to emit.
+        body_page_size: Characters per page; ``0`` = full body.
 
     Returns:
         Dict suitable for passing to jmd.serialize().
@@ -475,7 +535,14 @@ def message_to_dict(rec: MessageRecord) -> dict[str, object]:
     if rec.references:
         d["references"] = rec.references
     if rec.body:
-        d["body"] = rec.body
+        page_text, pages, total = paginate_body(
+            rec.body, body_page, body_page_size,
+        )
+        d["body"] = page_text
+        if pages > 1:
+            d["body-chars"] = total
+            d["body-pages"] = pages
+            d["body-page"] = min(max(body_page, 1), pages)
     if rec.flags:
         d["flags"] = rec.flags
     # Nested objects must come after all scalar fields.
