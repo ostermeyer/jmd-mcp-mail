@@ -396,3 +396,104 @@ async def test_send_without_from_name_uses_bare_address(
     _, _, raw = mock_smtp.sendmail.call_args[0]
     msg = email.message_from_bytes(raw, policy=email.policy.default)
     assert msg["From"] == "user@example.com"
+
+
+# ---------------------------------------------------------------------------
+# Sent-copy after delivery
+# ---------------------------------------------------------------------------
+
+_DOC = (
+    "# Message\n"
+    "to: r@example.com\n"
+    "subject: Hi\n"
+    "body: Text"
+)
+
+
+def _imap_info() -> ConnectionInfo:
+    return ConnectionInfo(
+        host="imap.example.com",
+        port=993,
+        tls_mode=TlsMode.IMPLICIT,
+        username="user@example.com",
+        password="pw",
+    )
+
+
+async def test_send_reports_message_id(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """The response document carries the generated Message-ID."""
+    result = await smtp.send(_DOC, info)
+    assert "message-id:" in result
+    assert "@example.com>" in result
+
+
+async def test_sent_copy_disabled(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """store_sent=False reports the copy as disabled."""
+    result = await smtp.send(_DOC, info, store_sent=False)
+    assert "sent-copy: disabled" in result
+
+
+async def test_sent_copy_failed_without_imap(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """No IMAP side degrades to failed — the send itself succeeds."""
+    result = await smtp.send(_DOC, info, imap_info=None)
+    assert "status: sent" in result
+    assert "sent-copy: failed" in result
+
+
+async def test_sent_copy_stored(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """With a working IMAP side the copy lands in the Sent folder."""
+    import contextlib
+    from collections.abc import AsyncGenerator
+    from unittest.mock import AsyncMock
+
+    @contextlib.asynccontextmanager
+    async def _fake_open(
+        _info: ConnectionInfo,
+    ) -> AsyncGenerator[MagicMock, None]:
+        yield MagicMock()
+
+    append = AsyncMock(return_value="4711")
+    with (
+        patch.object(smtp, "open_imap", _fake_open),
+        patch.object(
+            smtp, "find_special_folder",
+            new=AsyncMock(return_value="Sent"),
+        ),
+        patch.object(smtp, "append_raw", new=append),
+    ):
+        result = await smtp.send(_DOC, info, imap_info=_imap_info())
+    assert "sent-copy: stored" in result
+    assert "sent-folder: Sent" in result
+    assert '"4711"' in result
+    # The stored bytes are exactly the delivered bytes (\Seen flag).
+    _, _, delivered = mock_smtp.sendmail.call_args[0]
+    assert append.await_args.args[2] == delivered
+    assert append.await_args.args[3] == r"(\Seen)"
+
+
+async def test_sent_copy_failure_never_breaks_send(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """An IMAP exception during the copy still reports status: sent."""
+    import contextlib
+    from collections.abc import AsyncGenerator
+
+    @contextlib.asynccontextmanager
+    async def _broken_open(
+        _info: ConnectionInfo,
+    ) -> AsyncGenerator[MagicMock, None]:
+        raise OSError("imap down")
+        yield MagicMock()  # pragma: no cover
+
+    with patch.object(smtp, "open_imap", _broken_open):
+        result = await smtp.send(_DOC, info, imap_info=_imap_info())
+    assert "status: sent" in result
+    assert "sent-copy: failed" in result

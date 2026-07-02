@@ -18,24 +18,46 @@ import smtplib
 
 from jmd import jmd_mode, jmd_to_dict, serialize
 
-from mail_mcp._compose import ComposeError, compose
+from mail_mcp._compose import ComposeError, ComposeResult, compose
 from mail_mcp._endpoint import ConnectionInfo, TlsMode, xoauth2_string
+from mail_mcp.imap._append import append_raw
+from mail_mcp.imap._connection import open_imap
+from mail_mcp.imap._special import (
+    SENT_FALLBACKS,
+    SENT_USE,
+    find_special_folder,
+)
 
 _LABEL = "Message"
 
 
-async def send(document: str, info: ConnectionInfo) -> str:
+async def send(
+    document: str,
+    info: ConnectionInfo,
+    *,
+    imap_info: ConnectionInfo | None = None,
+    store_sent: bool = True,
+    sent_folder: str = "",
+) -> str:
     """Send an email described by a JMD Message document.
 
     The blocking ``smtplib`` delivery runs via ``asyncio.to_thread``
-    so the event loop is never blocked.
+    so the event loop is never blocked.  After a successful delivery
+    a copy is appended to the account's Sent folder (best-effort —
+    a storage failure yields ``sent-copy: failed`` in the response,
+    never a send error).
 
     Args:
         document: JMD data document with ``to``, ``subject``, ``body``
             fields and optional ``cc``, ``bcc``, ``attachments[]``.
-        info: Resolved connection parameters (host/port/TLS-mode/
-            username/password).  Built by the caller via
-            :meth:`ConnectionInfo.resolve`.
+        info: Resolved SMTP connection parameters.  Built by the
+            caller via :meth:`ConnectionInfo.resolve`.
+        imap_info: Resolved IMAP connection parameters for the
+            sent-copy; ``None`` disables storing (reported as
+            ``failed`` when ``store_sent`` is on).
+        store_sent: Store a copy in the Sent folder after delivery.
+        sent_folder: Explicit Sent folder path from config; empty
+            means SPECIAL-USE / well-known-name discovery.
 
     Returns:
         JMD confirmation document on success, ``# Error`` document
@@ -92,15 +114,65 @@ async def send(document: str, info: ConnectionInfo) -> str:
     except OSError as exc:
         return _error(500, "connection_error", str(exc))
 
-    return serialize(
-        {
-            "to": ", ".join(result.to_addrs),
-            "subject": result.subject,
-            "status": "sent",
-            "message-id": result.message_id,
-        },
-        label=_LABEL,
-    )
+    response: dict[str, object] = {
+        "to": ", ".join(result.to_addrs),
+        "subject": result.subject,
+        "status": "sent",
+        "message-id": result.message_id,
+    }
+    if not store_sent:
+        response["sent-copy"] = "disabled"
+    else:
+        stored = (
+            await _store_sent_copy(imap_info, sent_folder, result)
+            if imap_info is not None else None
+        )
+        if stored is None:
+            response["sent-copy"] = "failed"
+        else:
+            folder, uid = stored
+            response["sent-copy"] = "stored"
+            response["sent-folder"] = folder
+            if uid:
+                response["id"] = uid
+    return serialize(response, label=_LABEL)
+
+
+async def _store_sent_copy(
+    imap_info: ConnectionInfo,
+    sent_folder: str,
+    result: ComposeResult,
+) -> tuple[str, str | None] | None:
+    r"""Append the delivered bytes to the Sent folder (best-effort).
+
+    The stored copy is byte-identical to what went over the wire —
+    a faithful record (Bcc is envelope-only and thus absent).
+
+    Args:
+        imap_info: Resolved IMAP connection parameters.
+        sent_folder: Explicit folder from config, or empty for
+            discovery.
+        result: The composed message that was delivered.
+
+    Returns:
+        ``(folder, uid)`` on success (uid may be None), or None on
+        any failure — sending already succeeded, so storing must
+        never raise.
+    """
+    try:
+        async with open_imap(imap_info) as conn:
+            folder = sent_folder or await find_special_folder(
+                conn, imap_info, SENT_USE, SENT_FALLBACKS,
+            )
+            if not folder:
+                return None
+            uid = await append_raw(
+                conn, folder, result.raw_bytes, r"(\Seen)",
+                result.message_id,
+            )
+            return folder, uid
+    except Exception:  # noqa: BLE001 — sent-copy is strictly best-effort
+        return None
 
 
 def _deliver(

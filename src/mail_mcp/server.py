@@ -462,6 +462,17 @@ async def send(account: str, document: str) -> str:
       body:
       > Message text in **Markdown**
 
+    After a successful delivery a copy is stored in the account's
+    Sent folder (unless store-sent: false is configured, e.g. for
+    Gmail which auto-stores). The response reports it as
+    'sent-copy: stored | failed | disabled' plus 'sent-folder' and
+    the copy's 'id' when known. A failed sent-copy does NOT mean the
+    mail failed — 'status: sent' is authoritative.
+
+    TIP — draft instead of send: to let the user review and send the
+    mail themselves, create a draft via the `write` tool
+    (# Message without id). Drafts carry no AI footer.
+
     The password is resolved from the OS keystore under
     (service, username); seed it once via your platform's
     keystore CLI (macOS: ``security add-generic-password``).
@@ -484,7 +495,22 @@ async def send(account: str, document: str) -> str:
         info = _resolve_info(account, document, smtp=True)
         if isinstance(info, str):
             return info
-        result = await smtp.send(document, info)
+        acct = _config.resolve(account)
+        store_sent = acct.store_sent if acct else True
+        sent_folder = acct.sent_folder if acct else ""
+        imap_info = None
+        if store_sent:
+            # Best-effort: an unresolvable IMAP side only degrades
+            # the sent-copy (reported as failed), never the send.
+            maybe = _resolve_info(account, document)
+            if not isinstance(maybe, str):
+                imap_info = maybe
+        result = await smtp.send(
+            document, info,
+            imap_info=imap_info,
+            store_sent=store_sent,
+            sent_folder=sent_folder,
+        )
         if dbg.active:
             dbg.timing_ms = (
                 (time.perf_counter() - t0) * 1000
