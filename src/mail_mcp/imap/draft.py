@@ -22,6 +22,11 @@ from mail_mcp.imap._special import (
     DRAFTS_USE,
     find_special_folder,
 )
+from mail_mcp.imap._thread import (
+    apply_reply_defaults,
+    fetch_original,
+    reply_headers,
+)
 from mail_mcp.imap.read import _error
 
 _LABEL_MESSAGE = "Message"
@@ -107,12 +112,36 @@ async def _fetch_message_doc(
     )
 
 
+async def _reply_extras(
+    conn: imaplib.IMAP4,
+    fields: dict[str, object],
+    reply_uid: str,
+    reply_folder: str,
+) -> dict[str, str] | str:
+    """Fetch the original and derive headers/field defaults.
+
+    Returns:
+        The extra headers dict, or a serialized ``# Error`` when the
+        original message cannot be found.
+    """
+    orig = await fetch_original(conn, reply_folder, reply_uid)
+    if orig is None:
+        return _error(
+            404, "not_found",
+            f"message {reply_uid} not found in {reply_folder} "
+            "(in-reply-to)",
+        )
+    apply_reply_defaults(fields, orig)
+    return reply_headers(orig)
+
+
 async def create_draft(
     fields: dict[str, object],
     info: ConnectionInfo,
     *,
     drafts_folder: str = "",
-    extra_headers: dict[str, str] | None = None,
+    reply_uid: str = "",
+    reply_folder: str = "INBOX",
 ) -> str:
     """Create a draft message via IMAP APPEND.
 
@@ -121,18 +150,29 @@ async def create_draft(
             least one of ``to``/``subject``/``body``.
         info: Resolved IMAP connection parameters.
         drafts_folder: Per-account config override for the target.
-        extra_headers: Verbatim headers (reply threading).
+        reply_uid: UID of a message being answered (``in-reply-to``
+            frontmatter); adds threading headers and fills missing
+            ``to``/``subject`` from the original.
+        reply_folder: Folder of the original message.
 
     Returns:
         JMD ``# Message`` document of the stored draft, or
         ``# Error``.
     """
     try:
-        result = _compose_draft(fields, info, extra_headers)
-    except ComposeError as exc:
-        return _error(exc.status, exc.code, exc.message)
-    try:
         async with open_imap(info) as conn:
+            extra_headers: dict[str, str] | None = None
+            if reply_uid:
+                extras = await _reply_extras(
+                    conn, fields, reply_uid, reply_folder,
+                )
+                if isinstance(extras, str):
+                    return extras
+                extra_headers = extras
+            try:
+                result = _compose_draft(fields, info, extra_headers)
+            except ComposeError as exc:
+                return _error(exc.status, exc.code, exc.message)
             target = await _resolve_drafts_folder(
                 conn, info, fields, drafts_folder,
             )
@@ -160,7 +200,8 @@ async def update_draft(
     fields: dict[str, object],
     info: ConnectionInfo,
     *,
-    extra_headers: dict[str, str] | None = None,
+    reply_uid: str = "",
+    reply_folder: str = "INBOX",
 ) -> str:
     """Replace a draft: APPEND the new version, delete the old one.
 
@@ -175,17 +216,26 @@ async def update_draft(
             too).
         fields: Parsed JMD ``# Message`` fields (full new content).
         info: Resolved IMAP connection parameters.
-        extra_headers: Verbatim headers (reply threading).
+        reply_uid: UID of a message being answered (threading).
+        reply_folder: Folder of the original message.
 
     Returns:
         JMD ``# Message`` document of the new draft, or ``# Error``.
     """
     try:
-        result = _compose_draft(fields, info, extra_headers)
-    except ComposeError as exc:
-        return _error(exc.status, exc.code, exc.message)
-    try:
         async with open_imap(info) as conn:
+            extra_headers: dict[str, str] | None = None
+            if reply_uid:
+                extras = await _reply_extras(
+                    conn, fields, reply_uid, reply_folder,
+                )
+                if isinstance(extras, str):
+                    return extras
+                extra_headers = extras
+            try:
+                result = _compose_draft(fields, info, extra_headers)
+            except ComposeError as exc:
+                return _error(exc.status, exc.code, exc.message)
             new_uid = await append_raw(
                 conn, folder, result.raw_bytes,
                 _DRAFT_FLAGS, result.message_id,

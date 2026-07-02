@@ -42,13 +42,14 @@ _KNOWN_FM_READ: frozenset[str] = frozenset({
 })
 _KNOWN_FM_WRITE: frozenset[str] = frozenset({
     "rename-to", "move-to", "copy-to", "debug",
-    "access-token-sealed",
+    "access-token-sealed", "in-reply-to", "in-reply-to-folder",
 })
 _KNOWN_FM_DELETE: frozenset[str] = frozenset({
     "confirm", "debug", "access-token-sealed",
 })
 _KNOWN_FM_SEND: frozenset[str] = frozenset({
     "debug", "access-token-sealed",
+    "in-reply-to", "in-reply-to-folder",
 })
 
 _INSTRUCTIONS = (
@@ -347,6 +348,23 @@ async def write(account: str, document: str) -> str:
 
     Or copy-to instead of move-to for a non-destructive copy.
 
+    Reply drafts — 'in-reply-to' FRONTMATTER (draft create/replace
+    only): references the message being answered by its IMAP UID
+    ('in-reply-to-folder' defaults to INBOX). The server fetches the
+    original, sets the In-Reply-To/References headers (thread stays
+    intact), prefixes the subject with 'Re:' and defaults 'to' to
+    the original's Reply-To/From — so a minimal reply draft is just
+    a body. NOTE the naming trap: this frontmatter key takes a UID;
+    the *read-side field* 'in-reply-to' on a Message is the RFC 5322
+    Message-ID header. They are different planes.
+
+        in-reply-to: 42
+        in-reply-to-folder: INBOX
+
+        # Message
+        body:
+        > Got it, thanks!
+
     Frontmatter policy: observable tolerance — unknown keys are
     echoed in the response as 'ignored-keys: ...'.
     Debug frontmatter: 'debug: timing' (composable).
@@ -469,6 +487,19 @@ async def send(account: str, document: str) -> str:
     the copy's 'id' when known. A failed sent-copy does NOT mean the
     mail failed — 'status: sent' is authoritative.
 
+    Replying — 'in-reply-to' FRONTMATTER: references the message
+    being answered by its IMAP UID ('in-reply-to-folder' defaults to
+    INBOX). Sets In-Reply-To/References so the recipient's thread
+    stays intact, prefixes 'Re:' and defaults 'to' to the original's
+    Reply-To/From. (Do not confuse with the read-side 'in-reply-to'
+    field, which is a Message-ID header, not a UID.)
+
+        in-reply-to: 42
+
+        # Message
+        body:
+        > Reply text …
+
     TIP — draft instead of send: to let the user review and send the
     mail themselves, create a draft via the `write` tool
     (# Message without id). Drafts carry no AI footer.
@@ -498,12 +529,18 @@ async def send(account: str, document: str) -> str:
         acct = _config.resolve(account)
         store_sent = acct.store_sent if acct else True
         sent_folder = acct.sent_folder if acct else ""
+        is_reply = bool(str(fm.get("in-reply-to", "")).strip())
         imap_info = None
-        if store_sent:
-            # Best-effort: an unresolvable IMAP side only degrades
-            # the sent-copy (reported as failed), never the send.
+        if store_sent or is_reply:
             maybe = _resolve_info(account, document)
-            if not isinstance(maybe, str):
+            if isinstance(maybe, str):
+                if is_reply:
+                    # Threading is mandatory when requested — never
+                    # send an unthreaded reply.
+                    return maybe
+                # Sent-copy alone is best-effort: an unresolvable
+                # IMAP side degrades to sent-copy: failed.
+            else:
                 imap_info = maybe
         result = await smtp.send(
             document, info,

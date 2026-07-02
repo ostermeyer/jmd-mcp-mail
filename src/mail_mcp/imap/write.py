@@ -183,6 +183,12 @@ async def _write_message(
 
     move_to = str(fm.get("move-to", "")).strip()
     copy_to = str(fm.get("copy-to", "")).strip()
+    # Frontmatter reply reference (a UID, unlike the in-reply-to
+    # *body field* which is a Message-ID header).
+    reply_uid = str(fm.get("in-reply-to", "")).strip()
+    reply_folder = (
+        str(fm.get("in-reply-to-folder", "")).strip() or "INBOX"
+    )
     has_content = _has_content(fields)
 
     if has_content and (move_to or copy_to):
@@ -194,11 +200,18 @@ async def _write_message(
     if not uid:
         # No id → create a draft from the content fields.
         return await imap_draft.create_draft(
-            fields, info, drafts_folder=drafts_folder,
+            fields, info,
+            drafts_folder=drafts_folder,
+            reply_uid=reply_uid,
+            reply_folder=reply_folder,
         )
     if has_content:
         # id + content → replace the draft with this version.
-        return await imap_draft.update_draft(uid, folder, fields, info)
+        return await imap_draft.update_draft(
+            uid, folder, fields, info,
+            reply_uid=reply_uid,
+            reply_folder=reply_folder,
+        )
 
     if move_to:
         return await _move_message(uid, folder, move_to, info)

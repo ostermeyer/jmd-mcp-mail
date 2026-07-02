@@ -14,18 +14,25 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import imaplib
 import smtplib
 
 from jmd import jmd_mode, jmd_to_dict, serialize
 
 from mail_mcp._compose import ComposeError, ComposeResult, compose
 from mail_mcp._endpoint import ConnectionInfo, TlsMode, xoauth2_string
+from mail_mcp._frontmatter import parse_frontmatter
 from mail_mcp.imap._append import append_raw
 from mail_mcp.imap._connection import open_imap
 from mail_mcp.imap._special import (
     SENT_FALLBACKS,
     SENT_USE,
     find_special_folder,
+)
+from mail_mcp.imap._thread import (
+    apply_reply_defaults,
+    fetch_original,
+    reply_headers,
 )
 
 _LABEL = "Message"
@@ -74,6 +81,35 @@ async def send(
     if not isinstance(fields, dict):
         return _error(400, "invalid_document", "Expected a Message object")
 
+    fm = parse_frontmatter(document)
+    reply_uid = str(fm.get("in-reply-to", "")).strip()
+    reply_folder = (
+        str(fm.get("in-reply-to-folder", "")).strip() or "INBOX"
+    )
+    extra_headers: dict[str, str] | None = None
+    if reply_uid:
+        if imap_info is None:
+            return _error(
+                400, "imap_required",
+                "reply threading needs the account's IMAP side "
+                "(in-reply-to references a UID there)",
+            )
+        try:
+            async with open_imap(imap_info) as conn:
+                orig = await fetch_original(
+                    conn, reply_folder, reply_uid,
+                )
+        except (imaplib.IMAP4.error, OSError) as exc:
+            return _error(500, "imap_error", str(exc))
+        if orig is None:
+            return _error(
+                404, "not_found",
+                f"message {reply_uid} not found in {reply_folder} "
+                "(in-reply-to)",
+            )
+        apply_reply_defaults(fields, orig)
+        extra_headers = reply_headers(orig)
+
     try:
         result = compose(
             fields,
@@ -82,6 +118,7 @@ async def send(
             footer=True,
             bcc_in_header=False,
             require_recipients=True,
+            extra_headers=extra_headers,
         )
     except ComposeError as exc:
         return _error(exc.status, exc.code, exc.message)

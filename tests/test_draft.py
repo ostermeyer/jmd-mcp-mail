@@ -176,6 +176,49 @@ async def test_update_draft_old_uid_missing_still_succeeds() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Reply drafts
+# ---------------------------------------------------------------------------
+
+
+async def test_create_reply_draft_threads_and_defaults() -> None:
+    """A reply draft carries threading headers and defaulted fields."""
+    from mail_mcp.imap._thread import OriginalHeaders
+
+    orig = OriginalHeaders(
+        message_id="<orig@example.com>",
+        references="",
+        subject="Zahlen",
+        from_addr="Alice <alice@example.com>",
+        reply_to="",
+    )
+    stack, handles = _patch_draft_io(
+        fetch_original=AsyncMock(return_value=orig),
+    )
+    with stack:
+        await draft.create_draft(
+            {"body": "Passt!"}, _info(), reply_uid="42",
+        )
+    raw = handles["append_raw"].await_args[0][2]
+    assert b"In-Reply-To: <orig@example.com>" in raw
+    assert b"References: <orig@example.com>" in raw
+    assert b"Subject: Re: Zahlen" in raw
+    assert b"To: alice@example.com" in raw
+
+
+async def test_create_reply_draft_original_missing() -> None:
+    """A vanished original aborts the draft with 404."""
+    stack, handles = _patch_draft_io(
+        fetch_original=AsyncMock(return_value=None),
+    )
+    with stack:
+        result = await draft.create_draft(
+            {"body": "x"}, _info(), reply_uid="99",
+        )
+    assert "not_found" in result
+    handles["append_raw"].assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # write-tool routing
 # ---------------------------------------------------------------------------
 

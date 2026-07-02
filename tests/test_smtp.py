@@ -497,3 +497,91 @@ async def test_sent_copy_failure_never_breaks_send(
         result = await smtp.send(_DOC, info, imap_info=_imap_info())
     assert "status: sent" in result
     assert "sent-copy: failed" in result
+
+
+# ---------------------------------------------------------------------------
+# Reply threading (in-reply-to frontmatter)
+# ---------------------------------------------------------------------------
+
+
+async def test_send_reply_threads_and_defaults_to(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """A reply gets In-Reply-To/References and a defaulted To."""
+    import contextlib
+    from collections.abc import AsyncGenerator
+    from unittest.mock import AsyncMock
+
+    from mail_mcp.imap._thread import OriginalHeaders
+
+    @contextlib.asynccontextmanager
+    async def _fake_open(
+        _info: ConnectionInfo,
+    ) -> AsyncGenerator[MagicMock, None]:
+        yield MagicMock()
+
+    orig = OriginalHeaders(
+        message_id="<orig@example.com>",
+        references="<root@example.com>",
+        subject="Zahlen",
+        from_addr="Alice <alice@example.com>",
+        reply_to="",
+    )
+    doc = (
+        "in-reply-to: 42\n"
+        "\n"
+        "# Message\n"
+        "body: Passt, danke!"
+    )
+    with (
+        patch.object(smtp, "open_imap", _fake_open),
+        patch.object(
+            smtp, "fetch_original", new=AsyncMock(return_value=orig),
+        ),
+    ):
+        result = await smtp.send(
+            doc, info, imap_info=_imap_info(), store_sent=False,
+        )
+    assert "status: sent" in result
+    _, recipients, raw = mock_smtp.sendmail.call_args[0]
+    assert recipients == ["alice@example.com"]
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    assert msg["In-Reply-To"] == "<orig@example.com>"
+    assert msg["References"] == "<root@example.com> <orig@example.com>"
+    assert msg["Subject"] == "Re: Zahlen"
+
+
+async def test_send_reply_without_imap_side_errors(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """in-reply-to without an IMAP side is refused, nothing is sent."""
+    doc = "in-reply-to: 42\n\n# Message\nbody: x"
+    result = await smtp.send(doc, info, imap_info=None)
+    assert "imap_required" in result
+    mock_smtp.sendmail.assert_not_called()
+
+
+async def test_send_reply_original_missing_errors(
+    info: ConnectionInfo, mock_smtp: MagicMock,
+) -> None:
+    """A vanished original aborts the send with 404."""
+    import contextlib
+    from collections.abc import AsyncGenerator
+    from unittest.mock import AsyncMock
+
+    @contextlib.asynccontextmanager
+    async def _fake_open(
+        _info: ConnectionInfo,
+    ) -> AsyncGenerator[MagicMock, None]:
+        yield MagicMock()
+
+    doc = "in-reply-to: 42\n\n# Message\nbody: x"
+    with (
+        patch.object(smtp, "open_imap", _fake_open),
+        patch.object(
+            smtp, "fetch_original", new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await smtp.send(doc, info, imap_info=_imap_info())
+    assert "not_found" in result
+    mock_smtp.sendmail.assert_not_called()
