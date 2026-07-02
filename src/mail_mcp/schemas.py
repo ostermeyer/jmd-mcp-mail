@@ -2,17 +2,6 @@
 """JMD schema strings for all mail resource types."""
 from __future__ import annotations
 
-MAILBOX: str = """\
-see-also: Folder, Message, EmailAddress
-
-#! MailBox
-name: string readonly
-username: string email readonly
-imap-host: string readonly
-imap-port: integer readonly
-smtp-host: string readonly
-smtp-port: integer readonly"""
-
 FOLDER: str = """\
 #! Folder
 name: string readonly

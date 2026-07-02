@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added (Drafts, sent-copy, threading, search)
+
+- **Draft creation** — `write` with a `# Message` *without* `id` APPENDs the message to the Drafts folder (`\Draft` flag) so the user can finalize and send it from their own mail client. Partial drafts are allowed (any of `to`/`subject`/`body`); no AI footer (the user takes authorship by sending); `bcc` is emitted as a real header. Target folder: explicit `folder:` field > new `drafts-folder` config key > RFC 6154 SPECIAL-USE `\Drafts` > well-known names (incl. `Entwürfe`, `[Gmail]/Drafts`) > `CREATE Drafts`. The new UID is resolved via RFC 4315 `APPENDUID` with a Message-ID SEARCH fallback.
+- **Draft replace** — `# Message` with `id` *and* content fields restates the draft (append-then-delete; a mid-flight failure can duplicate, never lose).
+- **Sent copy** — after successful SMTP delivery the exact delivered bytes are APPENDed to the Sent folder (`\Seen`). New config keys `sent-folder` and `store-sent` (default `true`; set `false` for Gmail). Strictly best-effort: the response carries `sent-copy: stored | failed | disabled`, never a send error.
+- **Reply threading** — `in-reply-to: <uid>` frontmatter (+ `in-reply-to-folder:`, default INBOX) on `send` and `write`(draft): the server fetches the original, sets `In-Reply-To`/`References`, prefixes `Re:` and defaults `to` from Reply-To/From. Messages now also *expose* `message-id`/`in-reply-to`/`references` on the read side.
+- **Search** — date criteria `since`/`before`/`on` (ISO in, locale-independent `DD-Mon-YYYY` out), `cc` field, backslash/quote escaping in SEARCH strings, and automatic `SEARCH CHARSET UTF-8` for non-ASCII values.
+- **Incremental flags** — `## flags-add[]` / `## flags-remove[]` (`+FLAGS`/`-FLAGS`) alongside the replace form.
+
+### Changed
+
+- MIME composition extracted into `_compose.py`, shared by `send` and the draft path. Every composed message now carries a `Message-ID` and `Date`; attachments get real content types via `mimetypes`.
+- `send` runs the blocking SMTP delivery via `asyncio.to_thread` (no more event-loop blocking) and reports the generated `message-id`.
+- `encode_folder` quotes all IMAP atom-specials (brackets, parens, quotes) — `[Gmail]/Drafts` survives.
+
+### Fixed
+
+- Missing attachment files now return `attachment_not_found` instead of being silently dropped from the outgoing mail.
+- Flag replace (`## flags[]`) actually stores the requested flags — the previous parser check never matched, so every flag update cleared the whole set.
+
+### Removed
+
+- Dead `schemas.MAILBOX` (unreachable since 0.2; contradicted the privacy posture).
+
 ### Added
 
 - Cross-platform credential resolution. The keystore-read path now dispatches at runtime to the platform's native backend on all three desktop OSes:

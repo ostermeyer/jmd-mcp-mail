@@ -11,7 +11,8 @@ An MCP server that lets an LLM agent (Claude Desktop, Claude Code, …) work wit
 - **Credentials never enter the LLM context.** Passwords live in the OS keystore (macOS Keychain, Windows Credential Manager, Linux Secret Service). The server reads them via the platform's keystore CLI in its own process and uses them in IMAP/SMTP handshakes — they're never returned in any tool output, never logged.
 - **Seeding stays out-of-band.** New keystore items are created by the user in their own terminal via a copy-paste shell command. The password is typed into the keystore CLI's tty-interactive prompt and never traverses any tool call.
 - **JMD-native I/O.** Tool inputs and outputs are JMD documents (Markdown-shaped, LLM-friendly). Mail bodies round-trip Markdown ↔ HTML transparently.
-- **Transparent AI footer.** Every sent message carries a short disclosure that it was composed by an AI assistant.
+- **Human-in-the-loop drafts.** The agent can store a finished mail as an IMAP draft instead of sending it — you review, edit and hit send in your own mail client.
+- **Transparent AI footer.** Every *sent* message carries a short disclosure that it was composed by an AI assistant. Drafts carry none — by sending manually, you take authorship.
 
 ## Requirements
 
@@ -143,6 +144,9 @@ Accounts are defined in **one commented JMD file you author directly**. The LLM 
   smtp: smtp.ionos.de:587
   username: andreas@ostermeyer.de
   from-name: Andreas Ostermeyer    # optional From-header display name
+  drafts-folder: Entwürfe          # optional; else SPECIAL-USE/name lookup
+  sent-folder: Gesendete Objekte   # optional; else SPECIAL-USE/name lookup
+  store-sent: true                 # optional; false for Gmail (auto-stores)
 - label: outlook
   imap: outlook.office365.com:993
   smtp: smtp-mail.outlook.com:587
@@ -184,7 +188,7 @@ All four mail tools take `(account, document)` — `account` is a label from `co
 
 ### `read` — IMAP read and query
 
-`account` = a configured account label (IMAP side). Supports schema (`#! Folder`, `#! Message`), data reads (`# Folder[]`, `# Folder (path: …)`, `# Message (id: …, folder: …)`), and queries (`#? Folder`, `#? Message …`) with pagination (`page`, `page-size`, `count` frontmatter).
+`account` = a configured account label (IMAP side). Supports schema (`#! Folder`, `#! Message`), data reads (`# Folder[]`, `# Folder (path: …)`, `# Message (id: …, folder: …)`), and queries (`#? Folder`, `#? Message …`) with pagination (`page`, `page-size`, `count` frontmatter). Message queries filter on `from`/`to`/`cc`/`subject`/`body`, flag booleans (`seen`, `answered`, …) and date criteria `since`/`before`/`on` (ISO dates, server-side arrival date, day granularity). Non-ASCII search values are handled via `SEARCH CHARSET UTF-8` automatically. Messages expose `message-id`/`in-reply-to`/`references` for thread inspection.
 
 ### `write` — IMAP write
 
@@ -192,7 +196,10 @@ All four mail tools take `(account, document)` — `account` is a label from `co
 
 - `# Folder { path: X }` — create a folder.
 - `rename-to: Y` frontmatter + `# Folder { path: X }` — rename.
-- `# Message { id, folder, ## flags[] }` — set message flags.
+- `# Message` **without** `id` — **create a draft**: the message is stored in the Drafts folder with `\Draft`, for the user to finalize and send from their own mail client. At least one of `to`/`subject`/`body`; partial drafts are fine. No AI footer; `bcc` appears as a real header. Target folder: explicit `folder:` field > `drafts-folder` config key > SPECIAL-USE/name discovery.
+- `# Message` with `id` **and** content fields — **replace a draft** (full restate, no field merge; append-then-delete, never a loss).
+- `in-reply-to: <uid>` frontmatter (+ optional `in-reply-to-folder:`, default INBOX) — make the draft a threaded reply: In-Reply-To/References are set, `Re:` prefixed, `to` defaulted from the original.
+- `# Message { id, folder, ## flags[] }` — replace message flags; `## flags-add[]` / `## flags-remove[]` change them incrementally (mutually exclusive with the replace form).
 - `move-to: Y` or `copy-to: Y` frontmatter — move/copy a message between folders.
 
 ### `delete` — IMAP delete
@@ -206,6 +213,10 @@ All four mail tools take `(account, document)` — `account` is a label from `co
 ### `send` — SMTP send
 
 `account` = a configured account label (SMTP side).  Body is a `# Message` with `to`, `subject`, `body` (Markdown).  Optional: `cc`, `bcc`, `## attachments[]`, `from-name` (overrides the account's default).
+
+- **Sent copy** — after successful delivery the exact delivered bytes are stored in the Sent folder (`sent-folder` config key or SPECIAL-USE/name discovery). The response reports `sent-copy: stored | failed | disabled` — a failed copy never means a failed send. Disable with `store-sent: false` (Gmail stores server-side already).
+- **Reply threading** — `in-reply-to: <uid>` frontmatter (+ optional `in-reply-to-folder:`) references the message being answered by its IMAP UID; the server sets In-Reply-To/References, prefixes `Re:` and defaults `to` from the original's Reply-To/From. Note: the *read-side field* `in-reply-to` on a Message is the RFC 5322 Message-ID header — a different plane than this UID-taking frontmatter key.
+- Forwarding (`message/rfc822` embedding) is future work — quote the body and re-attach files manually for now.
 
 ### `accounts` — read-only account view
 
@@ -225,8 +236,10 @@ Said to the agent, in natural language:
 - *"List the folders in my gmail account."* → agent calls `read` with `account: gmail` + `# Folder[]`.
 - *"Show me the 10 most recent mails."* → agent calls `read` with `page-size: 10` + `#? Message`.
 - *"Find unread mails from Alice in the last week."* → `#? Message` query with seen/from/since predicates.
-- *"Send a quick reply saying 'Got it, thanks.' to message 42 in INBOX."* → agent reads message 42 to get the sender, then calls `send`.
+- *"Send a quick reply saying 'Got it, thanks.' to message 42 in INBOX."* → agent calls `send` with `in-reply-to: 42` frontmatter — the thread stays intact and `to`/`subject` default from the original.
+- *"Draft a reply to message 42 — I want to review it before it goes out."* → agent calls `write` with `in-reply-to: 42` and a `# Message` body; the draft lands in your Drafts folder for you to finalize and send.
 - *"Move the newsletter from Fermania to the Archive folder."* → `write` with `move-to: Archive`.
+- *"Mark message 7 as read but keep the flag."* → `write` with `## flags-add[] \Seen`.
 
 ## Troubleshooting
 
@@ -244,6 +257,10 @@ The server returns errors as JMD `# Error` documents with `status`, `code`, and 
 | `connection_error` | 500 | Network-level failure (DNS, timeout, TLS handshake).  Usually a typo in the endpoint or a flaky network. |
 | `bad_request` | 400 | Malformed endpoint (e.g. missing `:port`) or invalid JMD document.  The agent should fix this itself. |
 | `unknown_frontmatter_key` | 400 | A `delete` call had an unrecognised frontmatter key.  Destructive ops refuse rather than silently drop. |
+| `missing_fields` | 400 | `send` needs `to`+`subject`+`body`; a draft needs at least one of them. |
+| `attachment_not_found` | 400 | An `attachments[]` path does not exist on disk.  Nothing was sent or stored. |
+| `no_drafts_folder` | 500 | No Drafts folder could be found or created.  Set `drafts-folder:` in `config.jmd` or pass a `folder:` field. |
+| `imap_required` | 400 | `in-reply-to` on `send` needs the account's IMAP side (the value is an IMAP UID). |
 
 ## Security model
 
