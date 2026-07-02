@@ -227,28 +227,50 @@ async def _update_flags(
     fields: dict[str, object],
     info: ConnectionInfo,
 ) -> str:
-    """Replace the flags on a message from the ``## flags[]`` array."""
-    from jmd import JMDParser as _JMDParser
-    parsed = _JMDParser().parse(document)
-    flags_val = (
-        parsed.get("flags", []) if isinstance(parsed, dict) else []
-    )
-    if not isinstance(flags_val, list):
-        flags_val = [flags_val]
-    new_flags = " ".join(str(f) for f in flags_val)
+    r"""Update message flags.
+
+    ``## flags[]`` replaces the full flag set (``STORE FLAGS``);
+    ``## flags-add[]`` / ``## flags-remove[]`` change flags
+    incrementally (``+FLAGS`` / ``-FLAGS``) without clobbering
+    others (e.g. add ``\Seen`` while keeping ``\Flagged``).  Replace
+    and incremental forms are mutually exclusive.
+    """
+    def _flag_list(key: str) -> list[str]:
+        val = fields.get(key, [])
+        items = val if isinstance(val, list) else [val]
+        return [str(f).strip() for f in items if str(f).strip()]
+
+    replace = _flag_list("flags")
+    add = _flag_list("flags-add")
+    remove = _flag_list("flags-remove")
+
+    if replace and (add or remove):
+        return _error(
+            400, "bad_request",
+            "flags[] (replace) cannot be combined with "
+            "flags-add[]/flags-remove[]",
+        )
 
     encoded = encode_folder(folder)
     try:
         async with open_imap(info) as conn:
             await imap_call(conn, "select", encoded)
-            status, _ = await imap_call(
-                conn, "uid", "STORE", uid, "FLAGS", f"({new_flags})"
+            ops: list[tuple[str, list[str]]] = (
+                [("+FLAGS", add)] * bool(add)
+                + [("-FLAGS", remove)] * bool(remove)
+                if (add or remove)
+                else [("FLAGS", replace)]
             )
-            if status != "OK":
-                return _error(
-                    404, "not_found",
-                    f"Message {uid} not found in {folder}",
+            for verb, flag_list in ops:
+                status, _ = await imap_call(
+                    conn, "uid", "STORE", uid, verb,
+                    f"({' '.join(flag_list)})",
                 )
+                if status != "OK":
+                    return _error(
+                        404, "not_found",
+                        f"Message {uid} not found in {folder}",
+                    )
             st2, data = await imap_call(
                 conn, "uid", "FETCH", uid, "(BODY.PEEK[])"
             )

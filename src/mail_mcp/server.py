@@ -338,13 +338,26 @@ async def write(account: str, document: str) -> str:
         body:
         > …
 
-    Message — update flags:
+    Message — update flags. ## flags[] REPLACES the whole flag set;
+    ## flags-add[] / ## flags-remove[] change flags incrementally
+    without clobbering others (preferred for single-flag changes).
+    Replace and incremental forms are mutually exclusive.
 
         # Message
         id: 42
         folder: INBOX
         ## flags[]
         - \Seen
+
+    or incrementally:
+
+        # Message
+        id: 42
+        folder: INBOX
+        ## flags-add[]
+        - \Seen
+        ## flags-remove[]
+        - \Flagged
 
     Message — move/copy (frontmatter, two IMAP round-trips):
 
