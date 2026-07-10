@@ -382,19 +382,25 @@ wheels = [
 [[package]]
 name = "jmd-format"
 version = "0.7.0"
-source = { editable = "../jmd-impl" }
-
-[package.metadata]
-requires-dist = [{ name = "lxml", marker = "extra == 'xml'", specifier = ">=5.0" }]
-provides-extras = ["xml"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "hypothesis", specifier = ">=6.0" },
-    { name = "lxml-stubs", specifier = ">=0.5.1" },
-    { name = "mypy", specifier = ">=1.20.1" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "ruff", specifier = ">=0.15.10" },
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/e2/b896332a137a09422399f329d80ce0a2824c047c1646405b688ba2d386de/jmd_format-0.7.0.tar.gz", hash = "sha256:121d3edbaf8ab2e132e998f16b755c3ea90ccea26e94283eca4d2fb2730d721d", size = 101504, upload-time = "2026-07-07T11:50:18.221Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/a5/40f614038266cc92811b4680fed4b120909e9976735f653508d146595984/jmd_format-0.7.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:14ebd4cdb692c1b2e6688a19f4bf03efc8a99b85c0c3166c74a0cfeefe613987", size = 102576, upload-time = "2026-07-07T11:50:03.568Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/1b/3db2980904401bc5bbe3b5c5797cf4e02a10e6a202048ea6f2231a8596c4/jmd_format-0.7.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:13ce449181dc75be951efae13fcb67b32b0899627bae47bbd58161b64c8c653b", size = 188095, upload-time = "2026-07-07T11:50:04.664Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/2f/ad072de5f80988a3c648271b333876d9c61a235d90ff2288f53726286e51/jmd_format-0.7.0-cp310-cp310-win32.whl", hash = "sha256:643841d4064b133ab2c622cc6e6c84eb9224d929c1ea6e326594fe82ea696cf2", size = 102575, upload-time = "2026-07-07T11:50:05.586Z" },
+    { url = "https://files.pythonhosted.org/packages/49/53/a582c5a33c6ebd7aad0877f907b0b2f339314255a8935e1707f70c8f81aa/jmd_format-0.7.0-cp310-cp310-win_amd64.whl", hash = "sha256:53d3c7b184ce3727edc625fbecb99114a0f5e4b7ab38dcb19329bce9f9d49f93", size = 105372, upload-time = "2026-07-07T11:50:06.475Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/e1/73d7f07eb1a59a52879171c0b66700993429f6763bfd4cb289f4db251399/jmd_format-0.7.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:cb9f1c0c3a0a9b243e39f6e212c027e721d9e2194f96716846c2e4ca14bb916e", size = 102377, upload-time = "2026-07-07T11:50:07.352Z" },
+    { url = "https://files.pythonhosted.org/packages/26/56/9bf860996f57077dab4645c492e33c4011ea89a2b089a3bc12c22c3f7d7d/jmd_format-0.7.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c2ecff89c0054b482610c7a8a3b5a2c7b0093eaa238d30465dabb7f6c6107eac", size = 187521, upload-time = "2026-07-07T11:50:08.251Z" },
+    { url = "https://files.pythonhosted.org/packages/15/83/1cc866de8d05a0660027fac6eac203df3faf2e2d7e807dcad159009ddf6e/jmd_format-0.7.0-cp311-cp311-win32.whl", hash = "sha256:19a0534e2364e8023cab63c92847d612bfe5b94dbd98b7d1883e60c4a56a2667", size = 102461, upload-time = "2026-07-07T11:50:09.187Z" },
+    { url = "https://files.pythonhosted.org/packages/85/7d/495afd5f69dc8d16c494abb1207236efa454417b01755c1932fbd9c87fe8/jmd_format-0.7.0-cp311-cp311-win_amd64.whl", hash = "sha256:80384fc8aa2646529ad6183b6478133c00e0249051b2d355c0d8856e8d7fc71c", size = 105262, upload-time = "2026-07-07T11:50:10.1Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/6b/035cd0d2af49fe00bb32707536789dc9b89e8ce884ca5bcc56e6a050149b/jmd_format-0.7.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:d14e48b95b9501103fdbe632f51c5c1341ef2103f26803b4de519e6a2b08a05c", size = 102534, upload-time = "2026-07-07T11:50:11.036Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/4a/d8813c6b106f97934510760e3580f0e1ee389dcc86cb5f1142e4478f1925/jmd_format-0.7.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7751d83a20d95427fcbff95b46d39e255f672501917caab4e305b3da79889a37", size = 190780, upload-time = "2026-07-07T11:50:11.921Z" },
+    { url = "https://files.pythonhosted.org/packages/44/ac/eac7f171aee0815de94355c874cd7319a6d1c5f066f2eefe8d3d617274b2/jmd_format-0.7.0-cp312-cp312-win32.whl", hash = "sha256:55a2f1102a5bbc32e44146a0b7db284fa24d223f1e83abbeba966f46fa21ccc6", size = 102897, upload-time = "2026-07-07T11:50:12.897Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/83/0d7414ae188cc42a5bca176ecf9c3ad1364b9ea7949504a62d5b5a449c34/jmd_format-0.7.0-cp312-cp312-win_amd64.whl", hash = "sha256:a4fc3455f184891784e772f066ed9a96a44bf0ea9883828c50268a67de44e5c2", size = 105438, upload-time = "2026-07-07T11:50:13.801Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/75/83bde4928ea171517c1241f8aa82160fc270c21322d3d0693820fd6c54c0/jmd_format-0.7.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:035c64bf8d7416ded937fdf328edc113cc90cbec0942b20bac134d619a550376", size = 102554, upload-time = "2026-07-07T11:50:14.702Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/6a/5824d651f26d4fc0e87a9af78474dcbad7eed263330fb4e691176458214f/jmd_format-0.7.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b70bb95bb459b355e8e0d98cd019196c1019cf82adb06534939bcaa5137e8d1b", size = 190685, upload-time = "2026-07-07T11:50:15.521Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/a7/df90b09b3f70d23a70dfaa2c3197c51dde1cf841ace22bacec5dfcb0d6e0/jmd_format-0.7.0-cp313-cp313-win32.whl", hash = "sha256:b39de933e9abc14b0fec9b0c843bd5e28cd10f6611b3a6a14e8b4584cbfb906d", size = 102886, upload-time = "2026-07-07T11:50:16.42Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/08/1f45018c64a2aab93350ea2ba6772eb01b16a65d11d4a2ac0c8d976edeb0/jmd_format-0.7.0-cp313-cp313-win_amd64.whl", hash = "sha256:1a715aacf2a3949b55dbd5c30046f38f47029955f5593870e5225a16464605c0", size = 105425, upload-time = "2026-07-07T11:50:17.312Z" },
 ]
 
 [[package]]
@@ -420,7 +426,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jmd-format", editable = "../jmd-impl" },
+    { name = "jmd-format", specifier = ">=0.5" },
     { name = "keyring", specifier = ">=25.0" },
     { name = "markdown", specifier = ">=3.5" },
     { name = "markdownify", specifier = ">=0.11" },

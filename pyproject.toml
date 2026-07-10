@@ -43,9 +43,6 @@ jmd-mcp-mail = "mail_mcp.server:main"
 where = ["src"]
 include = ["mail_mcp*"]
 
-[tool.uv.sources]
-jmd-format = { path = "../jmd-impl", editable = true }
-
 [tool.ruff]
 line-length = 80
 target-version = "py310"
