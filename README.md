@@ -96,6 +96,30 @@ secret-tool store --label='jmd-mcp-mail' service "smtp.…:587" username "you@�
 
 `secret-tool` prompts for the password tty-interactively. The Secret Service backend (GNOME Keyring on GNOME, KWallet via the libsecret bridge on KDE, or any other libsecret-compatible store) must be unlocked at the time the server runs. `secret-tool` ships in the `libsecret-tools` package on Debian/Ubuntu and in `libsecret` on Fedora.
 
+**`credential_missing` even though the item is seeded?** Some MCP hosts
+(notably Electron-based ones like Claude Desktop) launch the server with a
+*stripped* environment that drops `DBUS_SESSION_BUS_ADDRESS` and
+`XDG_RUNTIME_DIR`. Without them the keyring's Secret Service backend has no
+session bus to reach, so every call fails with `credential_missing` while the
+item is in fact present. Pass the two variables through in the host's
+server-config `env` (replace `1000` with your uid — JSON can't run `id -u`):
+
+```json
+"jmd-mcp-mail": {
+  "command": "...",
+  "env": {
+    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+    "XDG_RUNTIME_DIR": "/run/user/1000"
+  }
+}
+```
+
+Confirm the cause without exposing the password: from a normal shell,
+`secret-tool lookup service "imap.…:993" username "you@…" >/dev/null; echo $?`
+prints `0` (the item exists), while the server process lacks the vars —
+`tr '\0' '\n' < /proc/<server-pid>/environ | grep -E 'DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR'`
+shows nothing.
+
 ### Windows (Credential Manager)
 
 For each endpoint, paste this in PowerShell or `cmd.exe` (replacing `…` and `<your-password>`):
