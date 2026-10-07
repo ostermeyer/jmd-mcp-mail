@@ -7,10 +7,11 @@ Accounts live in the out-of-reach ``config.jmd`` (see
 the agent knows which labels exist (and how each authenticates), plus this
 server's public key for the OAuth2 sealing flow.
 
-* ``#! Account``   → the Account schema.
-* ``# Account[]``  → list of ``{ label, auth?, broker-client? }`` — never
-                     username or endpoints.
-* ``# PublicKey``  → this server's X25519 public key.
+* ``#! Account`` / ``#! Capabilities`` → static schemas.
+* ``# Account[]`` → list of ``{ label, auth?, broker-client? }`` — never
+  username or endpoints.
+* ``# PublicKey`` → this server's X25519 public key.
+* ``# Capabilities`` → static, PII-free server discovery.
 
 Creating or changing accounts is done by editing ``config.jmd``; there is
 no tool path to write it (the ``username`` is personal data and must not
@@ -20,7 +21,7 @@ from __future__ import annotations
 
 from jmd import jmd_mode, jmd_to_dict, serialize
 
-from mail_mcp import _config
+from mail_mcp import __version__, _config
 
 _LABEL = "Account"
 
@@ -35,8 +36,9 @@ def handle(document: str) -> str:
         A JMD document — the result on success, or a ``# Error`` document.
     """
     # Local import to dodge a schemas → accounts circular import.
-    from mail_mcp.schemas import ACCOUNT, PUBLIC_KEY
+    from mail_mcp.schemas import ACCOUNT, CAPABILITIES, PUBLIC_KEY
 
+    label = _root_label(document).lower()
     try:
         mode = jmd_mode(document)
     except Exception as exc:  # noqa: BLE001 — opaque parser errors
@@ -44,11 +46,21 @@ def handle(document: str) -> str:
 
     try:
         if mode == "schema":
-            return PUBLIC_KEY if _is_pubkey(document) else ACCOUNT
+            if label == "publickey":
+                return PUBLIC_KEY
+            if label == "capabilities":
+                return CAPABILITIES
+            if label == "account":
+                return ACCOUNT
+            return _error(400, "unknown_label", f"Unknown label: {label!r}")
         if mode == "data":
-            if _is_pubkey(document):
+            if label == "publickey":
                 return _handle_public_key()
-            return _handle_list(document)
+            if label == "capabilities":
+                return _handle_capabilities()
+            if label == "account":
+                return _handle_list(document)
+            return _error(400, "unknown_label", f"Unknown label: {label!r}")
         if mode == "delete":
             return _readonly_error()
         if mode == "query":
@@ -104,13 +116,51 @@ def _root_label(document: str) -> str:
     return ""
 
 
-def _is_pubkey(document: str) -> bool:
-    """Whether *document*'s root label is ``PublicKey``."""
-    return _root_label(document).lower() == "publickey"
-
-
 def _handle_public_key() -> str:
     """Return this server's X25519 public key for the token broker."""
     from mail_mcp import _sealing
 
     return serialize({"key": _sealing.public_key()}, label="PublicKey")
+
+
+def _handle_capabilities() -> str:
+    """Return static, account-independent capabilities without PII."""
+    return serialize(
+        {
+            "server-version": __version__,
+            "account-discovery": "accounts: # Account[]",
+            "credential-model": "basic keystore or oauth2 sealed token",
+            "tools": [
+                {
+                    "name": "accounts",
+                    "resources": "Account, PublicKey, Capabilities",
+                    "operations": "read-only discovery",
+                },
+                {
+                    "name": "read",
+                    "resources": "Folder, Message, EmailAddress",
+                    "operations": "schema, data, query",
+                },
+                {
+                    "name": "write",
+                    "resources": "Folder, Message",
+                    "operations": "create, rename, flags, move, copy",
+                },
+                {
+                    "name": "delete",
+                    "resources": "Folder, Message",
+                    "operations": "permanent IMAP deletion",
+                },
+                {
+                    "name": "send",
+                    "resources": "Message",
+                    "operations": "SMTP submission",
+                },
+            ],
+            "confirmations": [
+                {"resource": "Message", "confirm": "delete-message"},
+                {"resource": "Folder", "confirm": "drop-folder"},
+            ],
+        },
+        label="Capabilities",
+    )

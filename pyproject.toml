@@ -4,28 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jmd-mcp-mail"
-version = "0.2.1"
+version = "0.3.0"
 description = "JMD-native MCP server for email — IMAP/SMTP access for LLM agents"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Andreas Ostermeyer", email = "andreas@ostermeyer.de" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = ["jmd", "mcp", "imap", "smtp", "email", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Communications :: Email",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
     "mcp[cli]>=1.0",
-    "jmd-format>=0.5",
+    "jmd-format>=0.11.0",
     "markdown>=3.5",
     "markdownify>=0.11",
     "pynacl>=1.5",
@@ -43,12 +43,9 @@ jmd-mcp-mail = "mail_mcp.server:main"
 where = ["src"]
 include = ["mail_mcp*"]
 
-[tool.uv.sources]
-jmd-format = { path = "../jmd-impl", editable = true }
-
 [tool.ruff]
 line-length = 80
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [
@@ -71,7 +68,6 @@ testpaths = ["tests"]
 
 [tool.mypy]
 strict = true
-mypy_path = "../jmd-impl"
 
 [[tool.mypy.overrides]]
 module = "nacl.*"

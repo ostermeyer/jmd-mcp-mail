@@ -153,10 +153,17 @@ def load() -> list[Account]:
             f"(got {type(data).__name__})"
         )
     accounts: list[Account] = []
+    labels: set[str] = set()
     for i, item in enumerate(data):
         if not isinstance(item, dict):
             raise ValueError(f"Account #{i} in {path} is not an object")
-        accounts.append(_account_from_dict(item))
+        account = _account_from_dict(item)
+        if account.label in labels:
+            raise ValueError(
+                f"config.jmd at {path} has duplicate label {account.label!r}"
+            )
+        labels.add(account.label)
+        accounts.append(account)
     return accounts
 
 

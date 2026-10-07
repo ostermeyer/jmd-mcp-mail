@@ -239,9 +239,12 @@ async def read(account: str, document: str) -> str:
                  name: <broker-client>
                  recipient-pubkey: <key from step 1>
 
-             One-time first: authorize the broker via its ``write``
-             ``# OAuthSession { name: <broker-client> }`` (a
-             device-code or browser login).
+             One-time first: authorize the broker via its ``write`` with::
+
+                 # OAuthSession
+                 name: <broker-client>
+
+             This starts a device-code or browser login.
           3. Pass the returned ``ciphertext`` to THIS call as a
              frontmatter key::
 
@@ -360,13 +363,19 @@ async def delete(account: str, document: str) -> str:
         #- Folder
         path: Archive
 
-    Message — permanent (\Deleted + EXPUNGE):
+    Message — permanent (\Deleted + EXPUNGE), requires explicit
+    confirmation:
+
+        confirm: delete-message
 
         #- Message
         id: 42
         folder: INBOX
 
-    Bulk message delete (#- Message[]): many in one call.
+    Bulk message delete (#- Message[]): also requires the same
+    confirmation.
+
+        confirm: delete-message
 
         #- Message[]
         - id: 42
@@ -473,9 +482,10 @@ def accounts(document: str) -> str:
 
     Supported document forms:
 
-        #! Account        (schema of a config.jmd account)
-        # Account[]       (list accounts: label, auth, broker-client)
-        # PublicKey       (this server's X25519 key for OAuth2 sealing)
+        #! Account / #! Capabilities  (static schemas)
+        # Account[]                    (list labels, auth, broker-client)
+        # PublicKey                    (X25519 key for OAuth2 sealing)
+        # Capabilities                 (static PII-free server discovery)
 
     Only ``label`` / ``auth`` / ``broker-client`` are returned — never
     username or endpoints. A write/delete attempt returns

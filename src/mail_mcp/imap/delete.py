@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import imaplib
 
-from jmd import JMDDeleteParser, JMDParser, jmd_mode, serialize
+from jmd import JMDDeleteParser, jmd_mode, serialize
 
 from mail_mcp._endpoint import ConnectionInfo
+from mail_mcp._frontmatter import parse_frontmatter
 from mail_mcp.imap._connection import encode_folder, imap_call, open_imap
 from mail_mcp.imap._parse import (
     folder_to_dict,
@@ -18,6 +19,8 @@ from mail_mcp.imap.read import _error, _extract_label
 
 _LABEL_FOLDER = "Folder"
 _LABEL_MESSAGE = "Message"
+_MESSAGE_CONFIRMATION = "delete-message"
+_FOLDER_CONFIRMATION = "drop-folder"
 
 
 async def delete(document: str, info: ConnectionInfo) -> str:
@@ -43,6 +46,11 @@ async def delete(document: str, info: ConnectionInfo) -> str:
     if parsed.is_bulk:
         match parsed.label.lower():
             case "message":
+                confirmation = _require_confirmation(
+                    document, _MESSAGE_CONFIRMATION, "messages",
+                )
+                if confirmation is not None:
+                    return confirmation
                 return await _bulk_delete_messages(parsed, info)
             case _:
                 return _error(
@@ -52,14 +60,40 @@ async def delete(document: str, info: ConnectionInfo) -> str:
 
     match label.lower():
         case "folder":
+            confirmation = _require_confirmation(
+                document, _FOLDER_CONFIRMATION, "a folder",
+            )
+            if confirmation is not None:
+                return confirmation
             return await _delete_folder(document, info)
         case "message":
+            confirmation = _require_confirmation(
+                document, _MESSAGE_CONFIRMATION, "a message",
+            )
+            if confirmation is not None:
+                return confirmation
             return await _delete_message(document, info)
         case _:
             return _error(
                 400, "unknown_label",
                 f"delete does not support label {label!r}",
             )
+
+
+def _require_confirmation(
+    document: str,
+    expected: str,
+    target: str,
+) -> str | None:
+    """Return an error unless deletion carries the exact confirmation."""
+    confirmation = str(parse_frontmatter(document).get("confirm", "")).strip()
+    if confirmation == expected:
+        return None
+    return _error(
+        400,
+        "confirmation_required",
+        f"Deleting {target} requires 'confirm: {expected}' in frontmatter.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -70,19 +104,9 @@ async def delete(document: str, info: ConnectionInfo) -> str:
 async def _delete_folder(document: str, info: ConnectionInfo) -> str:
     """Delete a folder and return its final document.
 
-    Requires ``confirm: drop-folder`` in frontmatter because folder
-    deletion is irreversible and removes all messages contained in
-    the folder.
+    The public dispatcher has already required ``confirm: drop-folder``.
+    Folder deletion is irreversible and removes all contained messages.
     """
-    fm_parser = JMDParser()
-    fm_parser.parse(document)
-    if fm_parser.frontmatter.get("confirm") != "drop-folder":
-        return _error(
-            400, "confirmation_required",
-            "Deleting a folder requires"
-            " 'confirm: drop-folder' in the frontmatter",
-        )
-
     parsed = JMDDeleteParser().parse(document)
     ids = parsed.identifiers
     path = str(ids.get("path", "")).strip()

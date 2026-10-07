@@ -2,7 +2,25 @@
 
 ## Unreleased
 
+## 0.3.0 — 2026-10-07
+
 ### Added
+
+- `accounts` now exposes static, PII-free `#! Capabilities` and `# Capabilities` documents. They enumerate the public tools, resources, authentication model, server version, and required destructive-operation confirmations without reading account configuration.
+- Permanent message deletion now requires `confirm: delete-message` for both single and bulk `#- Message` documents. Folder deletion continues to require `confirm: drop-folder`.
+
+### Changed
+
+- The runtime now requires Python 3.11 or later and resolves the published `jmd-format` 0.11 release line rather than a workspace-local editable dependency.
+- `# Capabilities` reports the installed `jmd-mcp-mail` package version without relying on FastMCP internals.
+- CI verifies the locked dependency graph on Python 3.11 and 3.14.
+
+### Fixed
+
+- Unknown resource labels and duplicate configured account labels now fail explicitly instead of falling through to unrelated dispatch paths or selecting an arbitrary account.
+- README and tool examples use canonical JMD body fields rather than invalid inline heading fields.
+
+### Included earlier unreleased work
 
 - Cross-platform credential resolution. The keystore-read path now dispatches at runtime to the platform's native backend on all three desktop OSes:
   - **Linux** — `secret-tool lookup service <s> username <u>` against any libsecret-compatible Secret Service backend (GNOME Keyring, KWallet via the bridge, …). Requires the `libsecret-tools` package (`apt install libsecret-tools` / `dnf install libsecret`).

@@ -15,9 +15,9 @@ An MCP server that lets an LLM agent (Claude Desktop, Claude Code, …) work wit
 
 ## Requirements
 
-- Python ≥ 3.10.
+- Python ≥ 3.11.
 - Runtime dependencies (pulled automatically by your installer):
-  - [`jmd-format`](https://pypi.org/project/jmd-format/) ≥ 0.5 — the JMD reference implementation.
+  - [`jmd-format`](https://pypi.org/project/jmd-format/) ≥ 0.11 — the JMD reference implementation.
   - [`mcp[cli]`](https://pypi.org/project/mcp/) ≥ 1.0 — the Model Context Protocol SDK.
   - [`markdown`](https://pypi.org/project/Markdown/) ≥ 3.5 and [`markdownify`](https://pypi.org/project/markdownify/) ≥ 0.11 — Markdown ↔ HTML round-trip for message bodies.
 - **All three desktop platforms**: macOS, Linux (GNOME/KDE via libsecret) and Windows. The credential resolver dispatches to the platform's native keystore at runtime — one wheel, no per-OS builds.
@@ -190,12 +190,25 @@ Providers that disabled Basic Auth require OAuth2. This server does **not** run 
 
 1. Define the account in `config.jmd` with `auth: oauth2` and a `broker-client` (the jmd-mcp-oauth2 client name) — see *Account configuration* above for the field shape.
 
-2. Authorize the broker session once (device-code or browser login): in jmd-mcp-oauth2, `write` a `# OAuthSession { name: outlook }`.
+2. Authorize the broker session once (device-code or browser login): in jmd-mcp-oauth2, call `write` with:
+
+   ```jmd
+   # OAuthSession
+   name: outlook
+   ```
 
 **Per call** — the agent does this automatically (the `read`/`send` tool descriptions spell it out):
 
 1. `accounts` → `# PublicKey` — this server's public key.
-2. jmd-mcp-oauth2 `read` → `# OAuthToken { name: outlook, recipient-pubkey: <key> }` → a sealed `ciphertext`.
+2. jmd-mcp-oauth2 `read` with:
+
+   ```jmd
+   # OAuthToken
+   name: outlook
+   recipient-pubkey: <key>
+   ```
+
+   This returns a sealed `ciphertext`.
 3. Any mail call with `access-token-sealed: <ciphertext>` in the document frontmatter.
 
 Call an OAuth2 account without a token and the server replies with `oauth_token_required`, naming the broker-client and the steps.
@@ -208,24 +221,24 @@ All four mail tools take `(account, document)` — `account` is a label from `co
 
 ### `read` — IMAP read and query
 
-`account` = a configured account label (IMAP side). Supports schema (`#! Folder`, `#! Message`), data reads (`# Folder[]`, `# Folder (path: …)`, `# Message (id: …, folder: …)`), and queries (`#? Folder`, `#? Message …`) with pagination (`page`, `page-size`, `count` frontmatter).
+`account` = a configured account label (IMAP side). Supports schema (`#! Folder`, `#! Message`), data reads (`# Folder[]`, `# Folder` with `path: …`, `# Message` with `id: …` and `folder: …`), and queries (`#? Folder`, `#? Message …`) with pagination (`page`, `page-size`, `count` frontmatter).
 
 ### `write` — IMAP write
 
 `account` = a configured account label (IMAP side).
 
-- `# Folder { path: X }` — create a folder.
-- `rename-to: Y` frontmatter + `# Folder { path: X }` — rename.
-- `# Message { id, folder, ## flags[] }` — set message flags.
+- `# Folder` with `path: X` — create a folder.
+- `rename-to: Y` frontmatter + `# Folder` with `path: X` — rename.
+- `# Message` with `id`, `folder`, and optional `## flags[]` — set message flags.
 - `move-to: Y` or `copy-to: Y` frontmatter — move/copy a message between folders.
 
 ### `delete` — IMAP delete
 
 `account` = a configured account label (IMAP side).  Strict frontmatter (unknown keys are refused, not silently dropped — this is destructive).
 
-- `#- Message { id, folder }` — delete a single message.
-- `#- Message[]` array — bulk delete.
-- `#- Folder { path }` with `confirm: drop-folder` — irreversibly drop a folder and all its messages.
+- `confirm: delete-message` frontmatter + `#- Message` with `id` and `folder` — permanently delete a single message.
+- `confirm: delete-message` frontmatter + `#- Message[]` — permanently delete messages in bulk.
+- `confirm: drop-folder` frontmatter + `#- Folder` with `path` — irreversibly drop a folder and all its messages.
 
 ### `send` — SMTP send
 
@@ -235,11 +248,12 @@ All four mail tools take `(account, document)` — `account` is a label from `co
 
 Read-only projection of `config.jmd` (see *Account configuration*):
 
-- `#! Account` — schema.
+- `#! Account` / `#! Capabilities` — static schemas.
 - `# Account[]` — list configured accounts: `label` (plus `auth`, `broker-client`). Never the username or endpoints.
 - `# PublicKey` — this server's X25519 public key for the OAuth2 sealing flow.
+- `# Capabilities` — static, PII-free discovery of tools, resources, and required confirmations.
 
-There is **no write path**: a `# Account { … }` (upsert) or `#- Account` (delete) returns `config_readonly`. Add or change accounts by editing `config.jmd`.
+There is **no write path**: a `# Account` upsert or `#- Account` delete returns `config_readonly`. Add or change accounts by editing `config.jmd`.
 
 ## Examples
 

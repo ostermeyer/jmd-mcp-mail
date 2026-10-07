@@ -83,3 +83,27 @@ def test_public_key_shape(mem_keyring: dict[str, str]) -> None:
     out = accounts.handle("# PublicKey")
     assert "# PublicKey" in out
     assert "key:" in out
+
+
+def test_capabilities_are_static_and_pii_free() -> None:
+    """`# Capabilities` describes tools without reading account details."""
+    _write_config(_OAUTH)
+    out = accounts.handle("# Capabilities\n")
+    assert "# Capabilities" in out
+    assert "delete-message" in out
+    assert "drop-folder" in out
+    assert "me@live.de" not in out
+    assert "office365" not in out
+
+
+def test_capabilities_schema_is_available() -> None:
+    """`#! Capabilities` returns the static discovery schema."""
+    from mail_mcp.schemas import CAPABILITIES
+
+    assert accounts.handle("#! Capabilities\n") == CAPABILITIES
+
+
+def test_unknown_label_is_rejected() -> None:
+    """Unknown labels do not fall through to Account handling."""
+    out = accounts.handle("#! Typo\n")
+    assert "unknown_label" in out

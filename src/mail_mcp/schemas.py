@@ -70,3 +70,18 @@ from-name: string readonly optional"""
 PUBLIC_KEY: str = """\
 #! PublicKey
 key: string readonly"""
+
+CAPABILITIES: str = """\
+#! Capabilities
+server-version: string readonly
+account-discovery: string readonly
+credential-model: string readonly
+
+## tools[]: object readonly
+- name: string readonly
+  resources: string readonly
+  operations: string readonly
+
+## confirmations[]: object readonly
+- resource: string readonly
+  confirm: string readonly"""

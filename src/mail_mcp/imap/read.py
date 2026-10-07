@@ -137,8 +137,10 @@ async def read(document: str, info: ConnectionInfo) -> str:
                 return schemas.FOLDER
             case "emailaddress":
                 return schemas.EMAIL_ADDRESS
-            case _:
+            case "message":
                 return schemas.MESSAGE
+            case _:
+                return _error(400, "unknown_label", f"Unknown label: {label!r}")
 
     # ---- Data ----
     if mode == "data":
@@ -148,8 +150,10 @@ async def read(document: str, info: ConnectionInfo) -> str:
                 return await _read_folder(document, info)
             case "folder[]":
                 return await _read_root_folders(info)
-            case _:
+            case "message":
                 return await _read_message(document, info)
+            case _:
+                return _error(400, "unknown_label", f"Unknown label: {label!r}")
 
     # ---- Query ----
     if mode == "query":
@@ -157,8 +161,10 @@ async def read(document: str, info: ConnectionInfo) -> str:
         match label.lower():
             case "folder":
                 return await _query_folders(document, info)
-            case _:
+            case "message":
                 return await _query_messages(document, info)
+            case _:
+                return _error(400, "unknown_label", f"Unknown label: {label!r}")
 
     return _error(400, "invalid_mode", f"Unsupported mode: {mode!r}")
 

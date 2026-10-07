@@ -94,6 +94,24 @@ def test_invalid_endpoint_rejected() -> None:
         _config.load()
 
 
+def test_duplicate_label_rejected() -> None:
+    """A duplicate label must not resolve to an arbitrary account."""
+    _write_config(
+        "# Account[]\n"
+        "- label: ionos\n"
+        "  imap: imap.ionos.de:993\n"
+        "  smtp: smtp.ionos.de:587\n"
+        "  username: first@example.com\n"
+        "- label: ionos\n"
+        "  imap: imap.other.example:993\n"
+        "  smtp: smtp.other.example:587\n"
+        "  username: second@example.com\n"
+    )
+
+    with pytest.raises(ValueError, match="duplicate"):
+        _config.load()
+
+
 def test_oauth_without_broker_rejected() -> None:
     """An oauth2 account without a broker-client is refused."""
     _write_config(

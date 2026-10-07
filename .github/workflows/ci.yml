@@ -7,29 +7,25 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: ruff + mypy + pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
 
-    # `UV_NO_SOURCES=1` makes every uv invocation in this job
-    # ignore the local `[tool.uv.sources]` block in pyproject.toml
-    # (which points jmd-format at the workspace-local
-    # `../jmd-impl` path).  Both `uv sync` and `uv run` need this.
-    env:
-      UV_NO_SOURCES: "1"
-
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.13"]
+        python-version: ["3.11", "3.14"]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -37,19 +33,14 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Sync dependencies
-        run: uv sync --python ${{ matrix.python-version }}
+      - name: Sync locked dependencies
+        run: uv sync --locked --all-groups --python ${{ matrix.python-version }}
 
       - name: Ruff
-        run: uv run ruff check src/ tests/
+        run: uv run ruff check .
 
-      # MYPYPATH is unset so mypy uses the installed jmd-format
-      # package, not the workspace-local `../jmd-impl` referenced
-      # in pyproject's `[tool.mypy] mypy_path`.
       - name: Mypy --strict
-        env:
-          MYPYPATH: ""
         run: uv run mypy --strict src/ tests/
 
       - name: Pytest
-        run: uv run pytest
+        run: uv run pytest -q
